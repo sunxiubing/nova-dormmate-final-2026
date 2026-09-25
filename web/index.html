@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DormMate · 温湿度监测</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="app__header">
+      <div class="brand">
+        <span class="brand__mark">DM</span>
+        <div class="brand__text">
+          <h1 class="brand__title">DormMate 温湿度监测</h1>
+          <p class="brand__sub">录入当前读数，获取宿舍环境状态与改善建议</p>
+        </div>
+      </div>
+    </header>
+
+    <main class="grid">
+      <!-- 数据录入 -->
+      <section class="card" aria-labelledby="input-title">
+        <h2 class="card__title" id="input-title">数据录入</h2>
+
+        <form id="analyze-form" novalidate>
+          <div class="field">
+            <label class="field__label" for="temperature">温度（℃）</label>
+            <input
+              class="field__input"
+              id="temperature"
+              name="temperature"
+              type="text"
+              inputmode="decimal"
+              autocomplete="off"
+              placeholder="例如 24.5"
+              aria-describedby="temperature-hint"
+            />
+            <p class="field__hint" id="temperature-hint">有效范围 -20 ~ 60 ℃，超出视为异常读数</p>
+          </div>
+
+          <div class="field">
+            <label class="field__label" for="humidity">湿度（%）</label>
+            <input
+              class="field__input"
+              id="humidity"
+              name="humidity"
+              type="text"
+              inputmode="decimal"
+              autocomplete="off"
+              placeholder="例如 58"
+              aria-describedby="humidity-hint"
+            />
+            <p class="field__hint" id="humidity-hint">有效范围 0 ~ 100 %，超出视为异常读数</p>
+          </div>
+
+          <div class="actions">
+            <button class="btn btn--primary" id="analyze-btn" type="submit">分析</button>
+            <button class="btn btn--ghost" id="reset-btn" type="button">清空</button>
+          </div>
+        </form>
+
+        <div class="alert" id="error-box" role="alert" hidden></div>
+      </section>
+
+      <!-- 分析结果 -->
+      <section class="card" aria-labelledby="result-title">
+        <h2 class="card__title" id="result-title">状态与建议</h2>
+        <div class="result result--empty" id="result-panel" aria-live="polite">
+          <p class="result__placeholder">尚未分析。请输入温度与湿度后点击「分析」。</p>
+        </div>
+      </section>
+
+      <!-- 历史记录 -->
+      <section class="card card--wide" aria-labelledby="history-title">
+        <div class="card__head">
+          <h2 class="card__title" id="history-title">历史记录</h2>
+          <span class="counter" id="history-count">0 条</span>
+        </div>
+        <ol class="history" id="history-list"></ol>
+        <p class="history__empty" id="history-empty">暂无记录，每次成功分析会自动生成一条带时间的记录。</p>
+      </section>
+    </main>
+
+   
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
