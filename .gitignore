@@ -1,0 +1,12 @@
+# Python缓存文件
+__pycache__/
+*.pyc
+
+# report目录规则：只保留 trend.png、report.html，其余临时文件忽略
+report/*
+!report/trend.png
+!report/report.html
+
+# 系统自动生成的垃圾文件
+.DS_Store
+Thumbs.db
