@@ -75,7 +75,10 @@
       <section class="card card--wide" aria-labelledby="history-title">
         <div class="card__head">
           <h2 class="card__title" id="history-title">历史记录</h2>
-          <span class="counter" id="history-count">0 条</span>
+          <div class="card__tools">
+            <span class="counter" id="history-count">0 条</span>
+            <button class="btn btn--export" id="export-btn" type="button" disabled>导出 CSV</button>
+          </div>
         </div>
         <ol class="history" id="history-list"></ol>
         <p class="history__empty" id="history-empty">暂无记录，每次成功分析会自动生成一条带时间的记录。</p>

@@ -38,6 +38,7 @@
     temperature: document.getElementById('temperature'),
     humidity: document.getElementById('humidity'),
     resetBtn: document.getElementById('reset-btn'),
+    exportBtn: document.getElementById('export-btn'),
     errorBox: document.getElementById('error-box'),
     resultPanel: document.getElementById('result-panel'),
     historyList: document.getElementById('history-list'),
@@ -123,6 +124,14 @@
     if (tempState !== 'normal') return tempState;
     if (humidityState !== 'normal') return humidityState;
     return 'normal';
+  }
+
+  /* 单一状态标签，用于历史徽标与 CSV 的 status 列 */
+  function buildSummary(tempState, humidityState) {
+    var abnormal = [];
+    if (tempState !== 'normal') abnormal.push(STATE_LABEL[tempState]);
+    if (humidityState !== 'normal') abnormal.push(STATE_LABEL[humidityState]);
+    return abnormal.length ? abnormal.join('+') : '正常';
   }
 
   /* ---------------- 格式化 ---------------- */
@@ -289,6 +298,45 @@
 
     els.historyCount.textContent = records.length + ' 条';
     els.historyEmpty.hidden = records.length > 0;
+    els.exportBtn.disabled = records.length === 0;
+  }
+
+  /* ---------------- 导出 CSV ---------------- */
+
+  var CSV_HEADERS = ['time', 'temperature', 'humidity', 'status'];
+
+  function buildCsv() {
+    var lines = [CSV_HEADERS.join(',')];
+
+    /* records 为倒序（最新在前），导出时按时间正序，便于后续绘制趋势图 */
+    records.slice().reverse().forEach(function (record) {
+      lines.push([
+        record.timeText,
+        formatNumber(record.temperature),
+        formatNumber(record.humidity),
+        record.summary
+      ].join(','));
+    });
+
+    return lines.join('\r\n') + '\r\n';
+  }
+
+  /* 前置 BOM（U+FEFF），保证 Excel 正确识别 UTF-8 中文状态列 */
+  var UTF8_BOM = String.fromCharCode(0xFEFF);
+
+  function exportCsv() {
+    if (records.length === 0) return;
+
+    var blob = new Blob([UTF8_BOM + buildCsv()], { type: 'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement('a');
+
+    link.href = url;
+    link.download = 'dormmate.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   }
 
   /* ---------------- 主流程 ---------------- */
@@ -337,7 +385,7 @@
       overall: overall,
       headline: buildHeadline(tempState, humidityState),
       suggestions: buildSuggestions(tempState, humidityState),
-      summary: overall === 'normal' ? '正常' : STATE_LABEL[tempState] + ' / ' + STATE_LABEL[humidityState]
+      summary: buildSummary(tempState, humidityState)
     };
 
     records.unshift(record);
@@ -368,6 +416,7 @@
 
   els.form.addEventListener('submit', handleSubmit);
   els.resetBtn.addEventListener('click', handleReset);
+  els.exportBtn.addEventListener('click', exportCsv);
   els.temperature.addEventListener('input', handleInput);
   els.humidity.addEventListener('input', handleInput);
 

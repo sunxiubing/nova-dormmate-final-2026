@@ -422,8 +422,14 @@ body {
 
 /* ---------- 历史记录 ---------- */
 
-.counter {
+.card__tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin-bottom: 12px;
+}
+
+.counter {
   padding: 3px 10px;
   border-radius: 999px;
   background: var(--accent-soft);
@@ -431,6 +437,26 @@ body {
   font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+.btn--export {
+  padding: 6px 14px;
+  border-color: var(--accent);
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.btn--export:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+}
+
+.btn--export:disabled {
+  border-color: var(--border);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .history {
