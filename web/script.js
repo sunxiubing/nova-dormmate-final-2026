@@ -422,3 +422,111 @@
 
   renderHistory();
 })();
+
+/* ============================================================
+ * M3 阶段1：摄像头手动抓拍
+ * 独立 IIFE，不引用 M1 闭包内任何变量；仅手动抓拍，无自动拍照。
+ * ============================================================ */
+(function () {
+  'use strict';
+
+  var video = document.getElementById('camera-video');
+  var canvas = document.getElementById('camera-canvas');
+  var previewBtn = document.getElementById('camera-preview-btn');
+  var snapBtn = document.getElementById('camera-snap-btn');
+  var statusEl = document.getElementById('camera-status');
+  var metaEl = document.getElementById('camera-meta');
+
+  if (!video || !canvas || !previewBtn || !snapBtn || !statusEl) {
+    return;
+  }
+
+  var stream = null;
+
+  /* M1 的 formatTime 在另一个闭包里取不到，M3 内保留一份等价的 4 行实现 */
+  function formatTime(date) {
+    return date.getFullYear() + '-' + pad2(date.getMonth() + 1) + '-' + pad2(date.getDate()) +
+      ' ' + pad2(date.getHours()) + ':' + pad2(date.getMinutes()) + ':' + pad2(date.getSeconds());
+  }
+
+  function pad2(value) {
+    return value < 10 ? '0' + value : String(value);
+  }
+
+  function setStatus(text, isError) {
+    statusEl.textContent = text;
+    if (isError) {
+      statusEl.classList.add('is-error');
+    } else {
+      statusEl.classList.remove('is-error');
+    }
+  }
+
+  function mapError(err) {
+    var name = err && err.name;
+    if (name === 'NotAllowedError' || name === 'SecurityError') {
+      return '摄像头权限被拒绝，请在浏览器地址栏允许访问后重试。';
+    }
+    if (name === 'NotFoundError' || name === 'DevicesNotFoundError' || name === 'OverconstrainedError') {
+      return '未检测到可用摄像头，请确认设备已连接。';
+    }
+    if (name === 'NotReadableError' || name === 'TrackStartError') {
+      return '摄像头被其他应用占用，请关闭占用程序后重试。';
+    }
+    return '开启预览失败：' + ((err && err.message) || '未知错误');
+  }
+
+  function onPreview() {
+    if (stream) {
+      setStatus('预览已开启，无需重复操作。');
+      return;
+    }
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setStatus('当前环境不支持摄像头，请通过 localhost 或 HTTPS 打开本页（file:// 无法调用）。', true);
+      return;
+    }
+
+    setStatus('正在请求摄像头权限…');
+
+    navigator.mediaDevices
+      .getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false })
+      .then(function (mediaStream) {
+        stream = mediaStream;
+        video.srcObject = mediaStream;
+        /* muted + autoplay 已满足自动播放策略，这里显式 play() 兜底；
+           失败不影响抓拍判定，故单独吞掉而不进入下面的 catch */
+        var played = video.play();
+        if (played && typeof played.catch === 'function') {
+          played.catch(function () {});
+        }
+        snapBtn.disabled = false;
+        setStatus('预览已开启，点击「抓拍快照」生成图片。');
+      })
+      .catch(function (err) {
+        setStatus(mapError(err), true);
+      });
+  }
+
+  function onSnap() {
+    if (!stream || video.readyState < 2 || !video.videoWidth) {
+      setStatus('请先开启预览，等画面出现后再抓拍快照。', true);
+      return;
+    }
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    canvas.hidden = false;
+
+    if (metaEl) {
+      metaEl.hidden = false;
+      metaEl.textContent = '抓拍时间：' + formatTime(new Date()) +
+        '　分辨率：' + video.videoWidth + ' × ' + video.videoHeight;
+    }
+
+    setStatus('已抓拍快照，图片已生成在下方画布。');
+  }
+
+  previewBtn.addEventListener('click', onPreview);
+  snapBtn.addEventListener('click', onSnap);
+})();

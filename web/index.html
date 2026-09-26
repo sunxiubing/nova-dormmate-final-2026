@@ -83,6 +83,25 @@
         <ol class="history" id="history-list"></ol>
         <p class="history__empty" id="history-empty">暂无记录，每次成功分析会自动生成一条带时间的记录。</p>
       </section>
+
+      <!-- 摄像头抓拍（M3 阶段1） -->
+      <section class="card card--wide camera" aria-labelledby="camera-title">
+        <div class="card__head">
+          <h2 class="card__title" id="camera-title">摄像头抓拍</h2>
+          <span class="camera__badge">M3</span>
+        </div>
+
+        <div class="camera__actions">
+          <button class="camera__btn camera__btn--ghost" id="camera-preview-btn" type="button">开启预览</button>
+          <button class="camera__btn camera__btn--primary" id="camera-snap-btn" type="button" disabled>抓拍快照</button>
+        </div>
+
+        <video class="camera__video" id="camera-video" autoplay muted playsinline></video>
+        <canvas class="camera__canvas" id="camera-canvas" hidden></canvas>
+
+        <p class="camera__status" id="camera-status" role="status">尚未开启预览。摄像头需要 localhost 或 HTTPS 环境，file:// 无法调用。</p>
+        <p class="camera__meta" id="camera-meta" hidden></p>
+      </section>
     </main>
 
    
