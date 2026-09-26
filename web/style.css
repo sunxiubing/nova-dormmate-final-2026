@@ -662,3 +662,107 @@ body {
   color: var(--text-muted);
   font-size: 12.5px;
 }
+
+/* ---------- 语音交互（M3 阶段2） ---------- */
+
+.voice__badge {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}
+
+.voice__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.voice__btn {
+  padding: 9px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.voice__btn--primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: #fff;
+}
+
+.voice__btn--primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+.voice__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 监听中：红色描边 + 浅红底，与「已开启」的蓝色主按钮区分 */
+.voice__btn.is-listening {
+  border-color: var(--hot);
+  background: var(--hot-soft);
+  color: var(--hot);
+}
+
+.voice__hint {
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.voice__panel {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
+.voice__transcript {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  min-height: 20px;
+}
+
+.voice__log {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 140px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.voice__log-item {
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.voice__status {
+  margin: 12px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.voice__status.is-error {
+  color: var(--hot);
+  font-weight: 600;
+}

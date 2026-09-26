@@ -102,6 +102,27 @@
         <p class="camera__status" id="camera-status" role="status">尚未开启预览。摄像头需要 localhost 或 HTTPS 环境，file:// 无法调用。</p>
         <p class="camera__meta" id="camera-meta" hidden></p>
       </section>
+
+      <!-- 语音交互（M3 阶段2） -->
+      <section class="card card--wide voice" aria-labelledby="voice-title">
+        <div class="card__head">
+          <h2 class="card__title" id="voice-title">语音交互</h2>
+          <span class="voice__badge">M3</span>
+        </div>
+
+        <div class="voice__actions">
+          <button class="voice__btn voice__btn--primary" id="voice-toggle-btn" type="button">开始语音监听</button>
+        </div>
+
+        <p class="voice__hint">支持语音指令：「朗读状态」「拍照」</p>
+
+        <div class="voice__panel">
+          <p class="voice__transcript" id="voice-transcript" aria-live="polite">点击「开始语音监听」后，请说出指令…</p>
+          <ol class="voice__log" id="voice-log"></ol>
+        </div>
+
+        <p class="voice__status" id="voice-status" role="status">语音识别与朗读需要 Chrome 或 Edge 浏览器；识别依赖语音服务网络，建议通过 localhost 或 HTTPS 打开本页。</p>
+      </section>
     </main>
 
    

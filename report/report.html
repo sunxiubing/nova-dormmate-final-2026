@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DormMate 温湿度分析报告</title>
+<style>
+  :root {
+    --text: #182034; --muted: #6b7793; --border: #e2e7f1;
+    --accent: #2f6df6; --warn: #dd4b32; --ok: #12996b; --surface: #fff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 20px 56px; background: #eef1f8; color: var(--text);
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  header { margin-bottom: 22px; }
+  h1 { margin: 0 0 6px; font-size: 22px; }
+  h2 { margin: 28px 0 12px; font-size: 15px; letter-spacing: .06em;
+        text-transform: uppercase; color: var(--muted); }
+  .meta { margin: 0; color: var(--muted); font-size: 13px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+           padding: 14px 16px; }
+  .stat__label { display: block; color: var(--muted); font-size: 12px; }
+  .stat__value { display: block; font-size: 20px; font-weight: 650;
+                  font-variant-numeric: tabular-nums; }
+  .stat__sub { display: block; color: var(--muted); font-size: 12px; }
+  .panel { background: var(--surface); border: 1px solid var(--border);
+            border-radius: 14px; padding: 18px; }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { padding: 9px 10px; text-align: left; border-bottom: 1px solid var(--border);
+            font-size: 13.5px; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px;
+        text-transform: uppercase; letter-spacing: .04em; }
+  tbody tr:last-child td { border-bottom: none; }
+  td.warn { color: var(--warn); font-weight: 600; }
+  .muted { color: var(--muted); font-size: 13.5px; }
+  .skipped { margin: 0; padding-left: 20px; color: var(--muted); font-size: 13px; }
+  img.trend { display: block; width: 100%; height: auto; border-radius: 10px; }
+  footer { margin-top: 26px; color: var(--muted); font-size: 12.5px; text-align: center; }
+  code { background: #eef1f8; padding: 1px 6px; border-radius: 5px; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>DormMate 温湿度分析报告</h1>
+    <p class="meta">
+      数据源：<code>D:\DormMate-Final\data\dormmate.csv</code> ·
+      生成时间：2026-09-26 13:28:10 ·
+      规则：温度 &lt; 18 ℃ 偏冷，温度 ≥ 30 ℃ 偏热，湿度 ≥ 75 % 偏湿
+    </p>
+  </header>
+
+  <h2>摘要</h2>
+  <div class="stats"><div class="stat"><span class="stat__label">总记录数</span><span class="stat__value">1 条</span><span class="stat__sub">数据源 dormmate.csv</span></div><div class="stat"><span class="stat__label">温度范围</span><span class="stat__value">12 ~ 12 ℃</span><span class="stat__sub">均值 12.0 ℃</span></div><div class="stat"><span class="stat__label">湿度范围</span><span class="stat__value">45 ~ 45 %</span><span class="stat__sub">均值 45.0 %</span></div><div class="stat"><span class="stat__label">异常记录</span><span class="stat__value">1 条</span><span class="stat__sub">占比 100.0%</span></div></div>
+
+  <div class="cols" style="margin-top: 14px;">
+    <div class="panel">
+      <h2 style="margin-top:0">综合状态分布</h2>
+      <table>
+        <thead><tr><th>状态</th><th>数量</th><th>占比</th></tr></thead>
+        <tbody><tr><td class="warn">偏冷</td><td>1</td><td>100.0%</td></tr></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h2 style="margin-top:0">温度状态分布</h2>
+      <table>
+        <thead><tr><th>状态</th><th>数量</th><th>占比</th></tr></thead>
+        <tbody><tr><td class="warn">偏冷</td><td>1</td><td>100.0%</td></tr></tbody>
+      </table>
+      <h2>湿度状态分布</h2>
+      <table>
+        <thead><tr><th>状态</th><th>数量</th><th>占比</th></tr></thead>
+        <tbody><tr><td>正常</td><td>1</td><td>100.0%</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <h2>异常关注记录</h2>
+  <div class="panel">
+      <table>
+        <thead><tr><th>时间</th><th>温度 (℃)</th><th>湿度 (%)</th><th>状态</th></tr></thead>
+        <tbody><tr><td>2026-09-26 13:25:07</td><td>12</td><td>45</td><td class="warn">偏冷</td></tr></tbody>
+      </table></div>
+
+  <h2>趋势图</h2>
+  <div class="panel">
+    <img class="trend" src="trend.png" alt="温湿度趋势图" />
+  </div>
+
+  <footer>由 analysis/analysis.py 自动生成 · 共 1 条有效记录</footer>
+</div>
+</body>
+</html>

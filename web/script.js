@@ -11,6 +11,8 @@
  *   2. 非数字      -> 提示“必须是数字”
  *   3. 明显异常值  -> 超出有效范围（温度 -20 ~ 60 ℃，湿度 0 ~ 100 %）时提示
  */
+let isRunningCommand = false; // 指令冷却锁
+let mediaStream = null; // 保存摄像头流，用来判断摄像头是否开启
 
 (function () {
   'use strict';
@@ -490,9 +492,11 @@
 
     navigator.mediaDevices
       .getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false })
-      .then(function (mediaStream) {
-        stream = mediaStream;
-        video.srcObject = mediaStream;
+      .then(function (ms) {
+        /* 参数不能叫 mediaStream，否则会遮蔽全局变量，下面那行赋值就落不到全局上 */
+        stream = ms;
+        video.srcObject = ms;
+        mediaStream = ms;   /* 同步到全局，语音模块据此判断摄像头是否已开启 */
         /* muted + autoplay 已满足自动播放策略，这里显式 play() 兜底；
            失败不影响抓拍判定，故单独吞掉而不进入下面的 catch */
         var played = video.play();
@@ -529,4 +533,383 @@
 
   previewBtn.addEventListener('click', onPreview);
   snapBtn.addEventListener('click', onSnap);
+})();
+
+/* ============================================================
+ * M3 阶段2：语音交互（ASR + TTS）
+ * 独立 IIFE，不引用 M1/M3 闭包内任何变量。
+ * ASR 用浏览器原生 webkitSpeechRecognition，TTS 用 window.speechSynthesis。
+ * 无自动监听、无自动朗读、无自动拍照；唯一一个 setTimeout 是指令冷却锁（见 handleFinal）。
+ * ============================================================ */
+(function () {
+  'use strict';
+
+  var toggleBtn = document.getElementById('voice-toggle-btn');
+  var statusEl = document.getElementById('voice-status');
+  var transcriptEl = document.getElementById('voice-transcript');
+  var logEl = document.getElementById('voice-log');
+
+  /* 页面没有语音卡片时直接静默退出，不访问 window */
+  if (!toggleBtn || !statusEl || !transcriptEl || !logEl) {
+    return;
+  }
+
+  var win = typeof window !== 'undefined' ? window : null;
+  var SR = win ? (win.SpeechRecognition || win.webkitSpeechRecognition) : null;
+
+  var PLACEHOLDER = '点击「开始语音监听」后，请说出指令…';
+  var LOG_MAX = 20;
+  /* 指令冷却时长：TTS 播报的尾音可能被麦克风收回并再次识别成指令 */
+  var COMMAND_COOLDOWN_MS = 2000;
+
+  /* 致命错误：这些情况下不自动重启，否则会陷入每秒失败一次的死循环。
+     network 也算致命——国内 Chrome 的 ASR 走 Google 服务器，network 是常态。 */
+  var FATAL = {
+    'not-allowed': true,
+    'service-not-allowed': true,
+    'audio-capture': true,
+    'network': true
+  };
+
+  var recognition = null;      // 单例，避免重复重建
+  var listening = false;
+  var manualStop = false;      // 用户主动停止，onend 据此不重启
+  var speaking = false;        // TTS 播放期间抑制 onresult，防止识别到自己的声音
+  var currentUtterance = null;
+
+  /* ---------------- UI ---------------- */
+
+  function setStatus(text, isError) {
+    statusEl.textContent = text;
+    if (isError) {
+      statusEl.classList.add('is-error');
+    } else {
+      statusEl.classList.remove('is-error');
+    }
+  }
+
+  function setButton(on) {
+    if (on) {
+      toggleBtn.textContent = '停止语音监听';
+      toggleBtn.classList.add('is-listening');
+    } else {
+      toggleBtn.textContent = '开始语音监听';
+      toggleBtn.classList.remove('is-listening');
+    }
+  }
+
+  function setTranscript(text) {
+    transcriptEl.textContent = text || PLACEHOLDER;
+  }
+
+  function appendLog(text) {
+    var item = document.createElement('li');
+    item.className = 'voice__log-item';
+    item.textContent = text;
+    logEl.appendChild(item);
+    while (logEl.children.length > LOG_MAX) {
+      logEl.removeChild(logEl.children[0]);
+    }
+  }
+
+  /* ---------------- TTS ---------------- */
+
+  function handleSpeechEnd(event) {
+    /* 旧 utterance 的延迟回调不应清掉新 utterance 的状态 */
+    if (event && event.utterance && event.utterance !== currentUtterance) {
+      return;
+    }
+    speaking = false;
+    currentUtterance = null;
+  }
+
+  function stopSpeaking() {
+    /* speechSynthesis.cancel() 不触发 onend，speaking 必须手动清 */
+    speaking = false;
+    currentUtterance = null;
+    try {
+      if (win.speechSynthesis) {
+        win.speechSynthesis.cancel();
+      }
+    } catch (err) { /* 忽略 */ }
+  }
+
+  function speak(text) {
+    if (!win.speechSynthesis || !win.SpeechSynthesisUtterance) {
+      return;
+    }
+    if (speaking) {
+      stopSpeaking();   /* 后说的覆盖先说的 */
+    }
+    var utterance = new win.SpeechSynthesisUtterance(text);
+    /* 只设 lang，中文声音交给浏览器挑：页面刚加载时 getVoices() 通常还是空数组 */
+    utterance.lang = 'zh-CN';
+    utterance.onend = handleSpeechEnd;
+    utterance.onerror = handleSpeechEnd;
+    currentUtterance = utterance;
+    speaking = true;
+    try {
+      win.speechSynthesis.speak(utterance);
+    } catch (err) {
+      speaking = false;
+      currentUtterance = null;
+    }
+  }
+
+  /* ---------------- 朗读文本组装 ---------------- */
+
+  function textOf(root, selector) {
+    if (!root || typeof root.querySelector !== 'function') {
+      return '';
+    }
+    var node = root.querySelector(selector);
+    return node && node.textContent ? String(node.textContent).trim() : '';
+  }
+
+  /* 让 TTS 读得自然：℃ → 摄氏度，58 % → 百分之58，· → 逗号停顿 */
+  function speakable(text) {
+    return String(text)
+      .replace(/(\d+(?:\.\d+)?)\s*%/g, '百分之$1')
+      .replace(/\s*℃/g, '摄氏度')
+      .replace(/\s*·\s*/g, '，');
+  }
+
+  function buildStatusText() {
+    /* 主源：最新一次分析的结果面板 */
+    var panel = document.getElementById('result-panel');
+    var chips = panel && typeof panel.querySelectorAll === 'function'
+      ? panel.querySelectorAll('.chip') : [];
+    var parts = [];
+    for (var i = 0; i < chips.length; i++) {
+      var label = textOf(chips[i], '.chip__label');
+      var value = textOf(chips[i], '.chip__value');
+      var tag = textOf(chips[i], '.chip__tag');
+      if (!label || !value) {
+        continue;
+      }
+      parts.push(label + ' ' + speakable(value) + (tag ? '，' + tag : ''));
+    }
+    if (parts.length) {
+      return '当前' + parts.join('；') + '。';
+    }
+
+    /* 备用源：结果面板被「清空」后仍可读历史最新一条 */
+    var list = document.getElementById('history-list');
+    var item = list && typeof list.querySelector === 'function'
+      ? list.querySelector('li') : null;
+    var values = textOf(item, '.history__values');
+    if (values) {
+      var summary = textOf(item, '.history__summary');
+      return '最新记录：' + speakable(values) + (summary ? '，状态 ' + summary : '') + '。';
+    }
+
+    return '';
+  }
+
+  function readStatus() {
+    var text = buildStatusText();
+    if (!text) {
+      setStatus('暂无分析记录，无法朗读状态。');
+      speak('暂无分析记录，请先输入温湿度并点击分析。');
+      return;
+    }
+    setStatus('已朗读当前状态：' + text);
+    speak(text);
+  }
+
+  /* ---------------- 语音指令 ---------------- */
+
+  function takeSnapshot() {
+    /* 摄像头未开启时直接拦截：不能走到 canvas，否则会生成一张黑屏图片。
+       注意 TTS 回话里不能出现「拍照」二字，否则被麦克风收回后会再次触发本函数。 */
+    if (!mediaStream) {
+      setStatus('摄像头未开启，请先打开摄像头。', true);
+      appendLog('错误：摄像头未开启，请先打开摄像头！');
+      speak('摄像头未开启，请先打开摄像头');
+      return;
+    }
+
+    var snapBtn = document.getElementById('camera-snap-btn');
+    if (!snapBtn) {
+      return;
+    }
+    /* 禁用按钮的 click() 是空操作，必须先查 disabled 才有提示 */
+    if (snapBtn.disabled) {
+      setStatus('请先开启摄像头预览，再下达抓拍指令。', true);
+      speak('请先开启摄像头预览，再下达抓拍指令。');
+      return;
+    }
+    snapBtn.click();   /* 复用 M3 阶段1 的抓拍逻辑，不改动相机代码 */
+    setStatus('已通过语音指令触发抓拍。');
+    speak('已完成抓拍。');
+  }
+
+  function handleFinal(text) {
+    /* 冷却锁：上一条指令执行后 COMMAND_COOLDOWN_MS 内不再接受新指令。
+       这里拦截而不是在 onResult 顶部拦，否则冷却期间连识别文字都不上屏了。 */
+    if (isRunningCommand) {
+      return;
+    }
+
+    var wantsSnap = text.indexOf('拍照') !== -1;
+    var wantsRead = text.indexOf('朗读状态') !== -1;
+
+    if (!wantsSnap && !wantsRead) {
+      setStatus('未识别到指令，请说「朗读状态」或「拍照」。');
+      return;
+    }
+
+    isRunningCommand = true;
+    if (wantsSnap) {
+      takeSnapshot();
+    }
+    /* 朗读放在最后：即使拍照先播了提示，cancel-and-replace 也保证朗读最终胜出 */
+    if (wantsRead) {
+      readStatus();
+    }
+    setTimeout(function () {
+      isRunningCommand = false;
+    }, COMMAND_COOLDOWN_MS);
+  }
+
+  /* ---------------- ASR 生命周期 ---------------- */
+
+  function onResult(event) {
+    if (speaking) {
+      return;   /* TTS 正在播报，忽略麦克风收到的声音 */
+    }
+    var finalText = '';
+    var interimText = '';
+    var start = typeof event.resultIndex === 'number' ? event.resultIndex : 0;
+    /* 逐个判断 isFinal：final 结果可能跨多个 onresult 事件，不能只取数组尾 */
+    for (var i = start; i < event.results.length; i++) {
+      var result = event.results[i];
+      var transcript = result && result[0] && result[0].transcript
+        ? String(result[0].transcript).trim() : '';
+      if (!transcript) {
+        continue;
+      }
+      if (result.isFinal) {
+        finalText += transcript;
+      } else {
+        interimText += transcript;
+      }
+    }
+
+    if (finalText) {
+      setTranscript(finalText);
+      appendLog(finalText);
+      handleFinal(finalText);
+    } else if (interimText) {
+      setTranscript(interimText);
+    }
+  }
+
+  function mapSpeechError(code) {
+    if (code === 'no-speech') {
+      return '未检测到语音，继续监听中…';
+    }
+    if (code === 'audio-capture') {
+      return '未找到麦克风，请确认设备已连接。';
+    }
+    if (code === 'not-allowed' || code === 'service-not-allowed') {
+      return '麦克风权限被拒绝，请在浏览器地址栏允许访问后重试。';
+    }
+    if (code === 'network') {
+      return '语音识别服务网络错误：识别需要联网，Chrome 使用 Google 语音服务，国内可能不可达，可改用 Edge 浏览器。';
+    }
+    if (code === 'aborted') {
+      return '语音识别已中止。';
+    }
+    return '语音识别出错：' + (code || '未知错误');
+  }
+
+  function onError(event) {
+    var code = event && event.error ? event.error : '';
+    setStatus(mapSpeechError(code), true);
+    if (FATAL[code]) {
+      listening = false;
+      manualStop = true;   /* 置位后 onend 不会自动重启 */
+      setButton(false);
+    }
+  }
+
+  function onEnd() {
+    if (!listening || manualStop) {
+      return;
+    }
+    /* Chrome 静音约 10 秒会自动 end，这里重启以保持连续监听 */
+    try {
+      recognition.start();
+    } catch (err) { /* 重启竞态，忽略 */ }
+  }
+
+  function makeRecognition() {
+    if (recognition) {
+      return recognition;
+    }
+    recognition = new SR();
+    recognition.lang = 'zh-CN';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.onresult = onResult;
+    recognition.onerror = onError;
+    recognition.onend = onEnd;
+    return recognition;
+  }
+
+  function start() {
+    if (listening) {
+      return;
+    }
+    manualStop = false;
+    listening = true;
+    setButton(true);
+    setStatus('正在监听，请说出「朗读状态」或「拍照」。');
+    try {
+      makeRecognition().start();
+    } catch (err) {
+      listening = false;
+      setButton(false);
+      setStatus('语音监听启动失败：' + ((err && err.message) || '未知错误'), true);
+    }
+  }
+
+  function stop() {
+    manualStop = true;    /* 必须先置位：onend 是异步回调，否则会被判定为需要重启 */
+    listening = false;
+    try {
+      if (recognition) {
+        recognition.stop();
+      }
+    } catch (err) { /* 忽略 */ }
+    stopSpeaking();
+    setButton(false);
+    setTranscript('');
+    setStatus('已停止语音监听。');
+  }
+
+  function onToggle() {
+    if (listening) {
+      stop();
+    } else {
+      start();
+    }
+  }
+
+  /* ---------------- 初始守卫 ---------------- */
+
+  if (!SR) {
+    setStatus('当前浏览器不支持语音识别，请使用 Chrome 或 Edge 浏览器。', true);
+    toggleBtn.disabled = true;
+    return;
+  }
+
+  /* 注意：file:// 在 Secure Contexts 规范里算可信来源，isSecureContext 为 true，
+     拦不住，必须显式判断协议。这里只警示不禁用——真失败会走 onerror 展示。 */
+  if (win.location && win.location.protocol === 'file:') {
+    setStatus('file:// 环境下语音识别不可靠，请通过 localhost 或 HTTPS 打开本页。', true);
+  }
+
+  toggleBtn.addEventListener('click', onToggle);
 })();

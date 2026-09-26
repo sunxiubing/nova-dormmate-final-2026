@@ -1,3 +1,6 @@
+# nova-dormmate-final-2026
+宿舍温湿度监测系统
+
 # DormMate 宿舍温湿度监测系统
 
 ## 项目简介
