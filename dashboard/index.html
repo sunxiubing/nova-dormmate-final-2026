@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+ <html lang="zh-CN">
+ <head>
+   <meta charset="UTF-8">
+   <title>DormMate Dashboard</title>
+   <!-- 引入MQTT和Chart.js -->
+   <!-- 每个库都挂一串备用 CDN：jsdelivr 在国内经常被网络/代理拦掉，主源失败就按顺序换下一个。
+        两个细节决定了这么写才有效：
+        1) 用 document.write 而不是动态插 <script> —— 后者是异步的，
+           body 里的脚本可能在兜底脚本执行前就跑完了；
+        2) 一个 <script> 块只写一个备用源 —— document.write 的内容是在当前块结束后
+           才被解析执行的，同一块里连写两次，第二次判断时第一个还没加载，会两个都拉。 -->
+   <script src="https://cdn.jsdelivr.net/npm/mqtt@4.3.7/dist/mqtt.min.js"></script>
+   <script>if (typeof mqtt === 'undefined') document.write('<script src="https://cdn.bootcdn.net/ajax/libs/mqtt/4.3.7/mqtt.min.js"><\/script>')</script>
+   <script>if (typeof mqtt === 'undefined') document.write('<script src="https://cdn.staticfile.org/mqtt/4.3.7/mqtt.min.js"><\/script>')</script>
+   <script>if (typeof mqtt === 'undefined') document.write('<script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"><\/script>')</script>
+
+   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
+   <script>if (typeof Chart === 'undefined') document.write('<script src="https://cdn.bootcdn.net/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"><\/script>')</script>
+   <script>if (typeof Chart === 'undefined') document.write('<script src="https://cdn.staticfile.org/Chart.js/4.4.1/chart.umd.min.js"><\/script>')</script>
+   <script>if (typeof Chart === 'undefined') document.write('<script src="https://unpkg.com/chart.js@4.4.1/dist/chart.umd.js"><\/script>')</script>
+   <style>
+     *{box-sizing: border-box; font-family: sans-serif;}
+     h1{text-align:center;}
+     .card-wrap{display:flex;gap:16px;justify-content:center;margin:20px 0;flex-wrap:wrap;}
+     .card{
+       border:1px solid #ccc;
+       border-radius:10px;
+       padding:16px;
+       width:240px;
+     }
+     .card h3{margin-top:0;}
+     .btn-group{text-align:center;margin:20px;}
+     .btn{
+       padding:8px 20px;margin:0 5px;
+       border:none;border-radius:6px;
+       background:#409eff;color:white;font-size:16px;
+       cursor:pointer;
+     }
+     .btn.active{background:#2b6cb0;}
+     .conn{text-align:center;font-size:14px;color:#67c23a;margin:0 0 16px;}
+     .conn.error{color:#f56c6c;font-weight:600;}
+     .conn:empty{display:none;}
+     .detail{
+       width:740px;margin:0 auto 30px;
+       border:1px solid #aaa;border-radius:8px;padding:20px;
+     }
+     .chart-box{width:800px;margin:0 auto;}
+     .chart-note{text-align:center;font-size:13px;color:#909399;margin:8px 0 24px;}
+   </style>
+ </head>
+ <body>
+   <h1>DormMate 宿舍温湿度看板</h1>
+   <p class="conn" id="connStatus">连接中…</p>
+   <p class="conn" id="depStatus"></p>
+   <!-- 顶部3张状态卡片 -->
+   <div class="card-wrap">
+     <div class="card">
+       <h3>Dorm-A</h3>
+       <p>温度：<span id="tempA">--</span> ℃</p>
+       <p>湿度：<span id="humA">--</span> %</p>
+       <p>状态：<span id="statusA">--</span></p>
+     </div>
+     <div class="card">
+       <h3>Dorm-B</h3>
+       <p>温度：<span id="tempB">--</span> ℃</p>
+       <p>湿度：<span id="humB">--</span> %</p>
+       <p>状态：<span id="statusB">--</span></p>
+     </div>
+     <div class="card">
+       <h3>Dorm-C</h3>
+       <p>温度：<span id="tempC">--</span> ℃</p>
+       <p>湿度：<span id="humC">--</span> %</p>
+       <p>状态：<span id="statusC">--</span></p>
+     </div>
+   </div>
+   <!-- 节点切换按钮 -->
+   <div class="btn-group">
+     <button class="btn" onclick="switchNode('dorm-a', event)">查看DormA</button>
+     <button class="btn" onclick="switchNode('dorm-b', event)">查看DormB</button>
+     <button class="btn" onclick="switchNode('dorm-c', event)">查看DormC</button>
+   </div>
+   <!-- 选中节点详情面板 -->
+   <div class="detail">
+     <h3>选中宿舍详情：<span id="selectNode">未选择</span></h3>
+     <p>实时温度：<span id="detailTemp">--</span></p>
+     <p>实时湿度：<span id="detailHum">--</span></p>
+     <p>运行状态：<span id="detailStatus">--</span></p>
+   </div>
+   <!-- 趋势图区域 -->
+   <div class="chart-box">
+     <canvas id="tempChart"></canvas>
+     <p class="chart-note" id="tempChartTime">等待数据…</p>
+   </div>
+   <div class="chart-box">
+     <canvas id="humChart"></canvas>
+     <p class="chart-note" id="humChartTime">等待数据…</p>
+   </div>
+  
+ <script>
+ // MQTT 服务端地址候选，按顺序试，第一个连上的留下
+ // 浏览器只能通过 WebSocket 说 MQTT，说不了裸 TCP —— 这是浏览器沙箱的限制，不是 mqtt.js 的限制。
+ // mosquitto 常见配置是两个监听并存：1884 纯 TCP（MQTTX、mosquitto_pub 这类原生客户端走这里），
+ // 9001 websockets（网页必须走这里）。所以 9001 排第一位直接连上，1884 只作兜底：
+ // 那个地址浏览器必然握手失败，排前面只会白白等一个 connectTimeout 再退回来。
+ const WS_CANDIDATES = ['ws://127.0.0.1:9001', 'ws://127.0.0.1:1884']
+
+ // 存储三个宿舍最新数据
+ // 声明全部排在前面、startClient 调用放在脚本最末，是为了避开 TDZ：脚本一旦在中间抛错，
+ // 它后面的 const/let 都不会执行，点「查看DormA」碰到未初始化的 dataStore 会静默抛
+ // "Cannot access 'dataStore' before initialization"，从页面上看就是「按钮点了完全没反应」。
+ const dataStore = {
+   "dorm-a": {temperature:"--",humidity:"--",status:"--"},
+   "dorm-b": {temperature:"--",humidity:"--",status:"--"},
+   "dorm-c": {temperature:"--",humidity:"--",status:"--"}
+ }
+ let selectedNode = null
+
+ // 连接状态提示。原来一个连接事件都没监听，连不上时页面完全静默，
+ // 根本分不清「没连上 broker」和「连上了但没数据」。
+ function setConn(text, isError){
+   const el = document.getElementById('connStatus')
+   el.innerText = text
+   el.classList.toggle('error', !!isError)
+ }
+
+ // 依赖/图表问题单独占一行。不能和连接状态共用一行：图表初始化失败写进去之后，
+ // 紧接着 startClient 又写了「正在连接…」，提示当场被冲掉，
+ // 页面上只剩一块空白图表区，完全看不出原因 —— 空元素时 CSS 会把它整行隐藏。
+ function setDep(text){
+   const el = document.getElementById('depStatus')
+   if(el) el.innerText = text
+ }
+
+ // 依赖自检：mqtt.js 和 chart.js 都从公网 CDN 拉，国内网络或代理很容易拦掉。
+ // 缺 mqtt.js 时 mqtt.connect 直接抛 ReferenceError，脚本当场断掉，
+ // 状态行永远停在「连接中…」，页面看上去就是彻底没反应 —— 所以这里先明确报出来。
+ // head 里已经挂了几个备用源，走到这里说明它们全都没拉到。
+ if (typeof mqtt === 'undefined') {
+   setConn('⚠️ mqtt.js 未加载成功，无法连接 broker。主源和三个备用 CDN 都没拉到，请检查网络或代理设置后刷新页面。', true)
+   throw new Error('mqtt.js 未加载成功')
+ }
+
+ // 当前在用的 client；换地址时会指向新的那个，控制台里可以用它看连接状态
+ let client = null
+
+ function startClient(url){
+   setConn('正在连接 ' + url + ' …')
+   const c = mqtt.connect(url, {
+     clientId: 'dormmate-dashboard-' + Math.random().toString(16).slice(2, 8),
+     reconnectPeriod: 2000,
+     connectTimeout: 3000
+   })
+   client = c
+
+   // c.end() 触发的 close/reconnect 是异步的，可能在换了新地址之后才到。
+   // 不认一下「这个 client 还是不是当前那个」，旧 client 的残留事件会把状态行写回去
+   const stale = () => client !== c
+
+   // 这个 client 是否已经判过失败。mqtt.js 连不上时每隔 reconnectPeriod 报一次 error，
+   // 不挡住的话会反复触发换地址，把候选列表一路耗光
+   let failed = false
+
+   c.on('connect', ()=>{
+     if(stale()) return
+     setConn('已连接 ' + url)
+     // 必须显式订阅：MQTT 是发布/订阅模型，不订阅 broker 一条消息都不会推送。
+     // 原来只有 client.on('message') 而全文件没有 subscribe，所以永远收不到数据。
+     c.subscribe('dormmate/+/env', {qos:0}, (err, granted)=>{
+       if(err){ setConn('订阅失败：' + err.message, true); return }
+       setConn('已订阅 ' + granted.map(g=>g.topic).join(', ') + '   via ' + url)
+     })
+   })
+   c.on('message', onMessage)
+   c.on('reconnect', ()=>{ if(!stale()) setConn('重连中… ' + url, true) })
+   c.on('close',     ()=>{ if(!stale()) setConn('连接已断开', true) })
+   c.on('offline',   ()=>{ if(!stale()) setConn('已离线，等待重连…', true) })
+
+   // 连不上就换下一个候选地址，候选用完了才真正报错。
+   // 1884 是纯 TCP 监听，浏览器的 WebSocket 升级报文会被它当成畸形数据丢掉，所以这里必然失败一次，
+   // 退到 9001 才是正常路径 —— 状态行会把换地址的过程写出来，不至于让人误以为卡死
+   c.on('error', err=>{
+     if(failed) return
+     failed = true
+     client = null          // 先摘掉引用，后面 c.end() 触发的 close 就不会再往状态行上写字
+     c.end(true)            // 停掉这个 client，别让它在后台一直重试
+     const next = WS_CANDIDATES[WS_CANDIDATES.indexOf(url) + 1]
+     if(next){
+       setConn('连不上 ' + url + '（' + err.message + '），改试 ' + next + ' …', true)
+       startClient(next)
+     }else{
+       setConn('连接失败：' + err.message + '。请确认 mosquitto 已启动，且已开启 websockets 监听。', true)
+     }
+   })
+ }
+
+ // 建一张趋势图。用 try/catch 兜住并允许返回 null：图表库加载失败时不该连累消息回调。
+ // 原来 const chart = new Chart(...) 是顶层裸语句，Chart.js 一旦没加载成功
+ // （CDN 被代理/插件拦截是常见原因），这里抛 ReferenceError 会让整个脚本当场中断，
+ // 后面的 startClient 就不会被调用，消息回调也就永远不会注册 ——
+ // 表现出来就是「连接和订阅都正常，但卡片一直停在 --」，从页面完全看不出原因。
+ function buildChart(canvasId, title, datasets, yAxis){
+   try {
+     const c = new Chart(document.getElementById(canvasId).getContext('2d'), {
+       type: 'line',
+       data:{ labels:[], datasets: datasets },
+       options:{
+         responsive:true,
+         maintainAspectRatio:true,
+         plugins:{title:{display:true,text: title}},
+         // 横坐标现在是完整时间戳（"2026-09-28 00:53:00"），比原来的时分秒长得多，
+         // 十个点挤在一起必然重叠 —— 让 Chart.js 自动抽稀并允许倾斜，不至于糊成一片
+         scales: Object.assign(
+           { x: { ticks: { autoSkip: true, maxRotation: 45, autoSkipPadding: 12 } } },
+           yAxis
+         )
+       }
+     })
+     // 与 labels 一一对应的排序键（毫秒）。labels 存的是给人看的字符串，
+     // 拿它比大小是不可靠的：发布端给的是 "2026-09-28 00:53:00"，本地兜底给的是
+     // "2026/9/28 01:23:45"，两种格式逐字符比会得出荒谬结果。所以排序另存一份数字。
+     c.$epochs = []
+     return c
+   } catch(e){
+     console.error('趋势图初始化失败：', canvasId, e)
+     setDep(typeof Chart === 'undefined'
+       ? '⚠️ 趋势图不可用：chart.js 没加载成功（主源和三个备用源都失败了），温湿度卡片仍会正常刷新。'
+       : '⚠️ 趋势图不可用（' + e.message + '），温湿度卡片仍会正常刷新。')
+     return null
+   }
+ }
+
+ // 节点名（MQTT 主题里那套小写带横杠的）→ 图例上显示的名字
+ const NODES = ['dorm-a', 'dorm-b', 'dorm-c']
+ const NODE_LABEL = {'dorm-a':'DormA', 'dorm-b':'DormB', 'dorm-c':'DormC'}
+ // 三个宿舍固定用同一组颜色，两张图共用，方便上下对照着看
+ const SERIES_COLOR = ['#f56c6c', '#409eff', '#67c23a']
+ // spanGaps：万一某条曲线里还残留 null（比如从旧版本的 localStorage 里读出来的），
+ // 也把线连起来而不是断成散点。正常路径下 fillGaps 已经把 null 补掉了，这算第二道保险
+ const mkDataset = (metric, i) => ({label: NODE_LABEL[NODES[i]] + metric, data: [], borderColor: SERIES_COLOR[i], tension: 0.2, spanGaps: true})
+
+ // 温度图：纵轴不设范围，交给 Chart.js 自动缩放
+ const chartTemp = buildChart('tempChart', '温度实时趋势图',
+   NODES.map((n,i)=>mkDataset('温度', i)))
+
+ // 湿度图：纵轴建议 0~100，和湿度的物理量程对齐。
+ // 用 suggested* 而不是 min/max —— 前者只是建议值，数据超出去照样会把轴撑开，不会把点裁掉
+ const chartHum = buildChart('humChart', '湿度实时趋势图',
+   NODES.map((n,i)=>mkDataset('湿度', i)),
+   { y: { suggestedMin: 0, suggestedMax: 100 } })
+ 
+ // 切换节点函数
+ // 显式接收 ev：原来直接用隐式的 window.event，只有 Chrome 靠遗留行为能跑，
+ // 换浏览器或严格模式下 event 未定义会抛错
+ function switchNode(nodeId, ev){
+   const d = dataStore[nodeId]
+
+   // 未知节点不往下走：d 是 undefined，读 d.temperature 会抛 TypeError，
+   // 页面上表现为「点了完全没反应」，反而不如直接说清楚
+   if(!d){
+     console.warn('⚠️未知节点，无法切换：', nodeId)
+     return
+   }
+
+   selectedNode = nodeId
+   document.getElementById('selectNode').innerText = nodeId
+   document.getElementById('detailTemp').innerText = d.temperature
+   document.getElementById('detailHum').innerText = d.humidity
+   document.getElementById('detailStatus').innerText = d.status
+   //按钮高亮
+   document.querySelectorAll('.btn').forEach(btn=>btn.classList.remove('active'))
+   if(ev && ev.target) ev.target.classList.add('active')
+ }
+
+ // 状态兜底计算：与 web/script.js、analysis.py 的判定规则保持一致
+ // 温度 < 18 偏冷；温度 >= 30 偏热；湿度 >= 75 偏湿；组合用 + 连接
+ function computeStatus(temp, hum){
+   const parts = []
+   if(temp < 18) parts.push('偏冷')
+   else if(temp >= 30) parts.push('偏热')
+   if(hum >= 75) parts.push('偏湿')
+   return parts.length ? parts.join('+') : '正常'
+ }
+
+ // 把一条曲线里的 null 用「前一个已知值」补上（forward fill）。
+ // 这就是需求里「缺失节点不要填 null，复用上一次的值」的落点：某个宿舍在某个时刻没上报，
+ // 它的曲线就停在上一次的值上，而不是断开成一串散点。
+ // 开头的 null 故意不补 —— 那时这个节点确实一次都没上报过，拿它后来的首个值去回填
+ // 等于凭空造数据，图上会显示成「它一开始就在这个值上」，那是假的。
+ function fillGaps(data){
+   let last = null
+   for(let i = 0; i < data.length; i++){
+     if(data[i] === null || data[i] === undefined) data[i] = last
+     else last = data[i]
+   }
+ }
+
+ // 往趋势图里推进一个点。
+ // 插到哪里由时间决定，不是由到达顺序决定：迟到的旧报文必须插回它该在的位置，
+ // 直接 push 到末尾的话，它会挂在最右边而时间戳比左边所有点都早，曲线就在来回交叉。
+ // 三条曲线按 carry-forward 走：只有本次上报的那个节点写新值，其余保持插入点左边那个值。
+ // 温度图和湿度图共用这一个函数，两边 label 数量才会永远一致 —— 各写一份迟早会错位。
+ // c 为 null 说明图表库没加载成功，安静跳过，卡片照常更新。
+ function pushPoint(c, nodeIndex, value, label, epoch){
+   if(!c) return
+   const MAX = 10
+   const labels = c.data.labels, epochs = c.$epochs
+
+   // 插入位置 = 第一个「时间严格晚于本条」的点。
+   // 用 > 而不是 >=，是为了让 time 完全相同的报文保持到达顺序，后来的不会挤到前面去。
+   // epoch 为 null（时间字符串解析不出来）时退回追加，至少不破坏已有顺序
+   let at = labels.length
+   if(epoch !== null){
+     const later = epochs.findIndex(e => e !== null && e > epoch)
+     if(later !== -1) at = later
+   }
+
+   labels.splice(at, 0, label)
+   epochs.splice(at, 0, epoch)
+   c.data.datasets.forEach((ds,i)=>{
+     // 插入点左边那个值，就是这条曲线「当前已知的最新值」；左边没有就是 null。
+     // 追加时 at === ds.data.length，取的正是最后一个元素，和原来的 carry-forward 完全一致。
+     // 注意这个下标要在 splice 之前读 —— 读的是插入前的数组，正是我们要的那个位置
+     ds.data.splice(at, 0, i === nodeIndex ? value : (at > 0 ? ds.data[at-1] : null))
+   })
+
+   // 最多保留10组数据，超了从最旧的一端丢（labels 已按时间排好，[0] 就是最旧的）
+   while(labels.length > MAX){
+     labels.shift(); epochs.shift()
+     c.data.datasets.forEach(ds=>ds.data.shift())
+   }
+
+   // 补洞必须放在插入之后。中间插入（迟到的旧报文）会让同一个节点出现「报过之后又是 null」：
+   // 比如 B 在 t2 上报，而 t3 那个槽位是 B 还没上报时预留的 null，插完就成了
+   // [.., t2 有值, t3 = null]，曲线到 t3 就断掉。forward fill 把这之后所有 null 推成 t2 的值
+   c.data.datasets.forEach(ds=>fillGaps(ds.data))
+
+   c.update()
+ }
+
+ // 图表下方的实时同步时间。两张图由同一条消息驱动，时间必然相同，一起更新
+ let lastSyncLabel = ''
+ function setSyncTime(t){
+   lastSyncLabel = t
+   const text = '最后同步：' + t
+   document.getElementById('tempChartTime').innerText = text
+   document.getElementById('humChartTime').innerText = text
+ }
+
+ // ---------- 刷新后保留数据 ----------
+ // 键名带版本号：以后改了数据结构，换个键就等于让旧数据自然作废，
+ // 不会因为读到老格式把页面搞崩
+ const STORE_KEY = 'dormmate.dashboard.v1'
+
+ function serializeChart(c){
+   return c ? {labels: c.data.labels, epochs: c.$epochs, data: c.data.datasets.map(function(ds){ return ds.data })} : null
+ }
+
+ function restoreChart(c, s){
+   if(!c || !s || !Array.isArray(s.labels)) return
+   // 一律原地改（length = 0 再 push），不整个换数组 —— labels 是 Chart.js 内部持有引用的对象，
+   // 换掉引用它可能还在看旧的
+   c.data.labels.length = 0
+   c.data.labels.push.apply(c.data.labels, s.labels)
+   c.$epochs.length = 0
+   c.$epochs.push.apply(c.$epochs, s.epochs || [])
+   c.data.datasets.forEach(function(ds,i){
+     const src = (s.data && s.data[i]) || []
+     ds.data.length = 0
+     ds.data.push.apply(ds.data, src)
+   })
+   c.update()
+ }
+
+ function saveState(){
+   try{
+     localStorage.setItem(STORE_KEY, JSON.stringify({
+       temp: serializeChart(chartTemp),
+       hum:  serializeChart(chartHum),
+       store: dataStore,
+       last: lastSyncLabel
+     }))
+   }catch(e){
+     // 隐私模式、配额满、被浏览器策略禁用都会抛。存不下不该影响看板本身，记一条就够
+     console.warn('看板数据保存失败（不影响本次使用）：', e)
+   }
+ }
+
+ function loadState(){
+   let s
+   try{
+     const raw = localStorage.getItem(STORE_KEY)
+     if(!raw) return
+     s = JSON.parse(raw)
+   }catch(e){
+     console.warn('看板历史读取失败，按空图启动：', e)
+     return
+   }
+   if(!s) return
+
+   if(s.store){
+     Object.keys(dataStore).forEach(function(node){
+       if(s.store[node]) Object.assign(dataStore[node], s.store[node])
+     })
+   }
+   restoreChart(chartTemp, s.temp)
+   restoreChart(chartHum,  s.hum)
+   renderFromStore()
+   if(s.last) setSyncTime(s.last)
+ }
+
+ // 用 dataStore 里的最新值刷新顶部三张卡片和详情面板。
+ // 正常收到消息时是消息处理器直接写 DOM；这里是给「刷新后从 localStorage 恢复」用的 ——
+ // 少了这一步就会出现「图上有线、卡片却是 --」的割裂画面
+ function renderFromStore(){
+   NODES.forEach(function(node,i){
+     const d = dataStore[node]
+     if(d.temperature === '--') return          // 这个节点一次都没上报过，保持占位符
+     const sfx = ['A','B','C'][i]
+     document.getElementById('temp'   + sfx).innerText = d.temperature
+     document.getElementById('hum'    + sfx).innerText = d.humidity
+     document.getElementById('status' + sfx).innerText = d.status
+   })
+   if(selectedNode && dataStore[selectedNode]) switchNode(selectedNode)
+ }
+
+ // 把 payload 里的 time 解析成 {label, epoch}：
+ //   label —— 轴上显示的文字，原样保留发布端给的格式，页面不改写
+ //   epoch —— 排序用的毫秒数；解析不出来就是 null，那时 pushPoint 退回按到达顺序追加
+ // 用发布端自己的时间才是对的，那才是数据真正采集的时刻；拿浏览器本地时钟顶上会有个隐蔽的坑：
+ // 发布端和浏览器时钟差几分钟时，图上标的时间和真实采集点对不上，从页面上完全看不出来。
+ function parseTime(v){
+   if(typeof v === 'number' && isFinite(v)){
+     const ms = v >= 1e11 ? v : v * 1000          // 13 位按毫秒算，10 位按秒算
+     if(!isNaN(new Date(ms).getTime())) return {label: new Date(ms).toLocaleString(), epoch: ms}
+   }
+   if(typeof v === 'string' && v.trim()){
+     const s = v.trim()
+     let ms = Date.parse(s)
+     // "2026-09-28 00:53:00" 严格说不算 ISO（缺那个 T）。V8 出于兼容能直接吃下，
+     // 但那是实现扩展，换 Safari 会得到 Invalid Date —— 所以补一次带 T 的重试
+     if(isNaN(ms) && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s)) ms = Date.parse(s.replace(' ', 'T'))
+     return {label: s, epoch: isNaN(ms) ? null : ms}
+   }
+   return null
+ }
+
+// MQTT消息到达
+function onMessage(topic, payload){
+  const raw = payload.toString()
+  try{
+    const msg = JSON.parse(raw)
+    console.log('✅收到数据：', topic, msg)
+
+    // 节点名优先取 payload 的 nodeId；缺失时从主题 dormmate/<nodeId>/env 兜底解析。
+    // 主题本身已经带了节点名，发布端不一定会在 JSON 里重复一遍，
+    // 只认 msg.nodeId 的话那种发布端会被下面的守卫全数拦掉，页面一直停在 --
+    const topicMatch = /^dormmate\/([^/]+)\/env$/.exec(topic)
+    const node = msg.nodeId || (topicMatch && topicMatch[1])
+
+    // 未知节点直接忽略。原来不校验就赋给 dataStore[node]，nodeId 不是三个已知值时为
+    // undefined，赋值抛 TypeError 被 catch 吞掉，报成「解析消息出错」，错误信息误导
+    if(!dataStore[node]){
+      console.warn('⚠️未知节点，已忽略：', node, msg)
+      return
+    }
+
+    const temp = Number(msg.temperature)
+    const hum  = Number(msg.humidity)
+    
+    // 温湿度必须是有限数字，否则后面算状态会得出「正常」这种错误结论
+    if(!Number.isFinite(temp) || !Number.isFinite(hum)){
+      console.warn('⚠️温湿度字段无效，已忽略：', msg)
+      return
+    }
+
+    // 发布端没给 status（或给了空值）时本地兜底，避免页面显示字符串 "undefined"
+    const status = (msg.status === undefined || msg.status === null || msg.status === '')
+      ? computeStatus(temp, hum)
+      : msg.status
+    // 横坐标用 payload 里的 time；发布端没给、或给的格式解析不了，才退回浏览器本地时钟
+    const t = parseTime(msg.time) || {label: new Date().toLocaleString(), epoch: Date.now()}
+
+    //保存数据到仓库
+    dataStore[node].temperature = temp
+    dataStore[node].humidity = hum
+    dataStore[node].status = status
+
+    // 更新顶部卡片
+    if(node === 'dorm-a'){
+      document.getElementById('tempA').innerText = temp
+      document.getElementById('humA').innerText = hum
+      document.getElementById('statusA').innerText = status
+    }else if(node === 'dorm-b'){
+      document.getElementById('tempB').innerText = temp
+      document.getElementById('humB').innerText = hum
+      document.getElementById('statusB').innerText = status
+    }else if(node === 'dorm-c'){
+      document.getElementById('tempC').innerText = temp
+      document.getElementById('humC').innerText = hum
+      document.getElementById('statusC').innerText = status
+    }
+
+    // 如果当前选中的就是这个宿舍，同步刷新详情面板
+    if(selectedNode === node){
+      document.getElementById('detailTemp').innerText = temp
+      document.getElementById('detailHum').innerText = hum
+      document.getElementById('detailStatus').innerText = status
+    }
+
+    // 推进两张趋势图。nodeIndex 决定这次的值落进哪条曲线（dorm-a→0，dorm-b→1，dorm-c→2），
+    // 温度图和湿度图共用同一个索引，上下两张图的曲线位置才对得上
+    const nodeIndex = NODES.indexOf(node)
+    pushPoint(chartTemp, nodeIndex, temp, t.label, t.epoch)
+    pushPoint(chartHum,  nodeIndex, hum,  t.label, t.epoch)
+    setSyncTime(t.label)
+    saveState()          // 两张图都推进完了再存，存的才是完整状态
+  }catch(err){
+    console.error("❌解析消息出错！",err,"原始消息：",raw)
+  }
+}
+
+// 启动：先把上次刷新的数据摆回来，再连 broker。
+// 顺序反过来的话，恢复过程会覆盖掉刚收到的新消息
+loadState()
+startClient(WS_CANDIDATES[0])
+ </script>
+ </body>
+</html>

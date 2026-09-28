@@ -1,0 +1,123 @@
+<view class="container">
+
+  <!-- 顶部大标题区（完全复刻） -->
+  <view class="header-area">
+    <view class="logo-box">DM</view>
+    <view class="title-box">
+      <text class="main-title">DormMate 温湿度监测</text>
+      <text class="sub-title">输入当前读数，获取宿舍环境状态与改善建议</text>
+    </view>
+  </view>
+
+  <!-- 主要内容区：分为上下两部分（模拟Web的左右两栏，手机屏幕窄所以改为上下排列） -->
+  <view class="main-content">
+    
+    <!-- 上部：数据录入 & 状态建议 -->
+    <view class="top-cards">
+      
+      <!-- 卡片1：数据录入 -->
+      <view class="card">
+        <text class="card-title">数据录入</text>
+        
+        <view class="input-item">
+          <text class="input-label">温度 (°C)</text>
+          <input class="input-box" type="digit" value="{{temp}}" placeholder="请输入温度" bindinput="onTempInput" />
+          <text class="input-hint">有效范围 -20 - 60 °C，超出视为异常读数</text>
+        </view>
+
+        <view class="input-item">
+          <text class="input-label">湿度 (%)</text>
+          <input class="input-box" type="digit" value="{{humi}}" placeholder="请输入湿度" bindinput="onHumiInput" />
+          <text class="input-hint">有效范围 0 - 100 %，超出视为异常读数</text>
+        </view>
+
+        <view class="btn-row">
+          <button class="btn-analyze" bindtap="handleAnalyze">分析</button>
+          <button class="btn-clear" bindtap="handleClear">清空</button>
+        </view>
+      </view>
+
+      <!-- 卡片2：状态与建议 -->
+      <view class="card">
+        <text class="card-title">状态与建议</text>
+        
+        <!-- 动态横幅 -->
+        <view class="status-banner">
+           {{currentStatus}}，建议按下方指引调整
+        </view>
+
+        <!-- 数据小卡片 -->
+        <view class="mini-cards">
+          <view class="mini-card">
+            <text class="mini-label">温度</text>
+            <text class="mini-value">{{currentTemp}}</text>
+            <text class="mini-tag {{analysisResult.tempClass}}">{{analysisResult.tempStatus}}</text>
+          </view>
+          <view class="mini-card">
+            <text class="mini-label">湿度</text>
+            <text class="mini-value">{{currentHumi}}</text>
+            <text class="mini-tag {{analysisResult.humiClass}}">{{analysisResult.humiStatus}}</text>
+          </view>
+        </view>
+          <!-- 改善建议 -->
+        <view class="suggest-list">
+         
+        </view>
+           <!-- 分析时间 -->
+       
+
+        <!-- 建议列表 -->
+        <view class="suggestions-box">
+          <text class="suggestion-title">改善建议</text>
+          <view class="suggestion-item" wx:for="{{currentSuggest}}" wx:key="*this">
+            • {{item}}
+          </view>
+        </view>
+
+        <text class="analysis-time">分析时间：{{currentTime || '--'}}</text>
+      </view>
+
+    </view>
+
+    <!-- 下部：历史记录 -->
+    <view class="card">
+      <view class="history-header">
+        <text class="card-title">历史记录</text>
+        <view class="history-right">
+          <text class="count-text">{{historyList.length}} 条</text>
+          <button class="btn-export" bindtap="handleExportCSV">导出 CSV</button>
+        </view>
+      </view>
+
+      <!-- 动态渲染历史记录列表 -->
+      <view class="history-list">
+        <view class="history-item" wx:for="{{historyList}}" wx:key="id">
+          <!-- 左侧竖条 -->
+          <view class="status-bar {{item.statusClass}}"></view>
+          
+          <!-- 中间内容 -->
+          <view class="history-info">
+            <view class="history-top">
+              <text class="history-id">#{{item.id}}</text>
+              <text class="history-time">{{item.time}}</text>
+            </view>
+            <view class="history-bottom">
+              <text class="history-data">温度 {{item.temp}} °C · 湿度 {{item.humi}} %</text>
+            </view>
+          </view>
+
+          <!-- 右侧状态标签 -->
+          <view class="history-tag {{item.statusClass}}">
+            {{item.statusText}}
+          </view>
+        </view>
+
+        <!-- 空状态 -->
+        <view wx:if="{{historyList.length === 0}}" class="empty-state">
+          暂无数据，请去 Web 端点击同步
+        </view>
+      </view>
+    </view>
+
+  </view>
+</view>

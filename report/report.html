@@ -51,32 +51,32 @@
     <h1>DormMate 温湿度分析报告</h1>
     <p class="meta">
       数据源：<code>D:\DormMate-Final\data\dormmate.csv</code> ·
-      生成时间：2026-09-26 13:28:10 ·
+      生成时间：2026-09-28 17:49:46 ·
       规则：温度 &lt; 18 ℃ 偏冷，温度 ≥ 30 ℃ 偏热，湿度 ≥ 75 % 偏湿
     </p>
   </header>
 
   <h2>摘要</h2>
-  <div class="stats"><div class="stat"><span class="stat__label">总记录数</span><span class="stat__value">1 条</span><span class="stat__sub">数据源 dormmate.csv</span></div><div class="stat"><span class="stat__label">温度范围</span><span class="stat__value">12 ~ 12 ℃</span><span class="stat__sub">均值 12.0 ℃</span></div><div class="stat"><span class="stat__label">湿度范围</span><span class="stat__value">45 ~ 45 %</span><span class="stat__sub">均值 45.0 %</span></div><div class="stat"><span class="stat__label">异常记录</span><span class="stat__value">1 条</span><span class="stat__sub">占比 100.0%</span></div></div>
+  <div class="stats"><div class="stat"><span class="stat__label">总记录数</span><span class="stat__value">3 条</span><span class="stat__sub">数据源 dormmate.csv</span></div><div class="stat"><span class="stat__label">温度范围</span><span class="stat__value">11 ~ 60 ℃</span><span class="stat__sub">均值 27.7 ℃</span></div><div class="stat"><span class="stat__label">湿度范围</span><span class="stat__value">11 ~ 60 %</span><span class="stat__sub">均值 27.7 %</span></div><div class="stat"><span class="stat__label">异常记录</span><span class="stat__value">3 条</span><span class="stat__sub">占比 100.0%</span></div></div>
 
   <div class="cols" style="margin-top: 14px;">
     <div class="panel">
       <h2 style="margin-top:0">综合状态分布</h2>
       <table>
         <thead><tr><th>状态</th><th>数量</th><th>占比</th></tr></thead>
-        <tbody><tr><td class="warn">偏冷</td><td>1</td><td>100.0%</td></tr></tbody>
+        <tbody><tr><td class="warn">偏冷</td><td>2</td><td>66.7%</td></tr><tr><td class="warn">偏热</td><td>1</td><td>33.3%</td></tr></tbody>
       </table>
     </div>
     <div class="panel">
       <h2 style="margin-top:0">温度状态分布</h2>
       <table>
         <thead><tr><th>状态</th><th>数量</th><th>占比</th></tr></thead>
-        <tbody><tr><td class="warn">偏冷</td><td>1</td><td>100.0%</td></tr></tbody>
+        <tbody><tr><td class="warn">偏冷</td><td>2</td><td>66.7%</td></tr><tr><td class="warn">偏热</td><td>1</td><td>33.3%</td></tr></tbody>
       </table>
       <h2>湿度状态分布</h2>
       <table>
         <thead><tr><th>状态</th><th>数量</th><th>占比</th></tr></thead>
-        <tbody><tr><td>正常</td><td>1</td><td>100.0%</td></tr></tbody>
+        <tbody><tr><td>正常</td><td>3</td><td>100.0%</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -85,7 +85,7 @@
   <div class="panel">
       <table>
         <thead><tr><th>时间</th><th>温度 (℃)</th><th>湿度 (%)</th><th>状态</th></tr></thead>
-        <tbody><tr><td>2026-09-26 13:25:07</td><td>12</td><td>45</td><td class="warn">偏冷</td></tr></tbody>
+        <tbody><tr><td>2026-09-28 14:02:35</td><td>11</td><td>11</td><td class="warn">偏冷</td></tr><tr><td>2026-09-28 14:02:41</td><td>12</td><td>12</td><td class="warn">偏冷</td></tr><tr><td>2026-09-28 14:02:49</td><td>60</td><td>60</td><td class="warn">偏热</td></tr></tbody>
       </table></div>
 
   <h2>趋势图</h2>
@@ -93,7 +93,7 @@
     <img class="trend" src="trend.png" alt="温湿度趋势图" />
   </div>
 
-  <footer>由 analysis/analysis.py 自动生成 · 共 1 条有效记录</footer>
+  <footer>由 analysis/analysis.py 自动生成 · 共 3 条有效记录</footer>
 </div>
 </body>
 </html>

@@ -1,11 +1,26 @@
 # Python缓存文件
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.log
 
-# report目录规则：只保留 trend.png、report.html，其余临时文件忽略
+# report目录规则: 只保留 trend.png、report.html，其余临时文件忽略
 report/*
 !report/trend.png
 !report/report.html
+
+# data目录规则: 只保留正式数据 dormmate.csv，调试期的临时导出忽略
+# （不含 dormmate.csv —— 下划线是必需的，通配符不会误伤它）
+data/dormmate_*.csv
+
+# VSCode本地配置文件
+.vscode/
+*.code-workspace
+
+# 临时备份文件
+*.tmp
+*.bak
 
 # 系统自动生成的垃圾文件
 .DS_Store

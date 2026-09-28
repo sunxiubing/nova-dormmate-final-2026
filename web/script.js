@@ -364,6 +364,23 @@ let mediaStream = null; // 保存摄像头流，用来判断摄像头是否开�
       }
     });
 
+
+
+
+fetch(`http://192.168.131.200:5000/api/addRecord`,{
+  method:"POST",
+  headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({
+    temp: values.temperature,
+    humi: values.humidity,
+    statusText:"正常"
+  })
+})
+
+
+
+
+
     /* 校验不通过：只提示，不分析、不写历史 */
     if (errors.length > 0) {
       showErrors(errors);
@@ -913,3 +930,5 @@ let mediaStream = null; // 保存摄像头流，用来判断摄像头是否开�
 
   toggleBtn.addEventListener('click', onToggle);
 })();
+
+

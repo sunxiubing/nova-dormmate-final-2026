@@ -137,8 +137,24 @@ def locate_csv(explicit: str | None) -> Path:
     )
 
 
+def count_csv_rows(path: Path) -> int:
+    """数一遍 CSV 的数据行数（不含表头、不计空行），用来和有效记录数对照。
+
+    用 csv.reader 而不是数换行符：字段里带换行会被数成两行。
+    """
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.reader(handle)
+        next(reader, None)  # 表头
+        return sum(1 for row in reader if any((cell or "").strip() for cell in row))
+
+
 def load_records(path: Path):
-    """返回 (有效记录, 被跳过的行)；跳过原因镜像 M1 网页端的输入校验。"""
+    """返回 (有效记录, 被跳过的行)；跳过原因镜像 M1 网页端的输入校验。
+
+    records 是本函数的局部变量，每次调用都从空列表开始。脚本跑完进程就退出，
+    不存在跨次运行累加的可能——报告里的总数对不上时，问题一定在「读了哪个文件」
+    或「报告是哪一次生成的」，不在这里。
+    """
     records, skipped = [], []
 
     # utf-8-sig 同时兼容带 BOM（网页导出默认带 BOM）与不带 BOM 的文件
@@ -541,7 +557,17 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     csv_path = locate_csv(args.csv)
+
+    # 先打「读了哪个文件、里面有多少行」，再解析、再生成。
+    # 报告是覆盖写的，但如果脚本因为路径写错压根没跑起来（比如在仓库根目录敲
+    # python analysis.py，而文件其实在 analysis/ 子目录里），磁盘上留着的就是
+    # 上一次的旧报告，里面的总数当然是旧的。看到数字对不上时先看这几行，
+    # 再看报告页脚里的「生成时间」，就能分清是数据变了还是报告没更新。
+    print(f"数据源：{csv_path.resolve()}")
+    print(f"CSV 数据行：{count_csv_rows(csv_path)} 行（不含表头）")
+
     records, skipped = load_records(csv_path)
+    print(f"有效记录：{len(records)} 条" + (f"，跳过 {len(skipped)} 行" if skipped else ""))
 
     if not records:
         print(f"[错误] {csv_path} 中没有可用的有效记录，已终止，未生成报告。", file=sys.stderr)
@@ -563,9 +589,7 @@ def main(argv=None) -> int:
         encoding="utf-8",
     )
 
-    # 控制台摘要
-    print(f"数据源：{csv_path}")
-    print(f"有效记录：{stats['count']} 条" + (f"（跳过 {len(skipped)} 行）" if skipped else ""))
+    # 控制台摘要（数据源与行数已在读取阶段打印，这里不重复）
     print(f"时间范围：{records[0]['time_text']} ~ {records[-1]['time_text']}")
     print(f"温度：{stats['temp_min']['temperature']:g} ~ {stats['temp_max']['temperature']:g} ℃"
           f"（均值 {stats['temp_avg']:.1f}）")
