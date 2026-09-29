@@ -30,6 +30,16 @@
        width:240px;
      }
      .card h3{margin-top:0;}
+     /* 卡片上直接标出「哪个宿舍有问题」：用户第一眼看的就是这三张卡，
+          结论只写在横幅里的话，还得先找到横幅才知道该看哪张卡 */
+     .card.is-alert{border-color:#e6a23c;box-shadow:0 0 0 2px #fdf0d5;}
+     .card.is-win{border-color:#e6a23c;box-shadow:0 0 0 3px #fdecd2;}
+     .card-tag{float:right;font-size:12px;font-weight:500;padding:1px 8px;border-radius:9px;}
+     .card.is-win .card-tag{background:#e6a23c;color:#fff;}
+     .card.is-alert .card-tag{background:#fdf0d5;color:#b88230;}
+     /* 「这个值是上次会话留下的」提示。卡片和详情区共用一套措辞 */
+     .card-stale,.detail-stale{margin:10px 0 0;font-size:12px;color:#9a9a9a;}
+     .card-stale:empty,.detail-stale:empty{display:none;}
      .btn-group{text-align:center;margin:20px;}
      .btn{
        padding:8px 20px;margin:0 5px;
@@ -47,38 +57,125 @@
      }
      .chart-box{width:800px;margin:0 auto;}
      .chart-note{text-align:center;font-size:13px;color:#909399;margin:8px 0 24px;}
+     /* A1 优先提示 + A2 处置按钮。配色沿用页面已有的一套（链接蓝、成功绿、警告橙、危险红） */
+     .a1-panel{width:740px;margin:0 auto 20px;border:1px solid #e6a23c;border-radius:8px;padding:14px 20px;background:#fdf6ec;}
+     .a1-banner{margin:0 0 6px;font-size:16px;font-weight:600;color:#b88230;cursor:pointer;}
+     .a1-banner:hover{text-decoration:underline;}
+     .a1-banner.is-idle{color:#9a9a9a;cursor:default;font-size:14px;font-weight:500;}
+     .a1-banner.is-idle:hover{text-decoration:none;}
+     /* 三宿舍总览。常驻在订阅状态行下面，不跟着 A1 面板一起隐藏 */
+     .overview{width:880px;margin:0 auto 18px;border:1px solid #e0e0e0;border-radius:8px;padding:12px 20px 4px;background:#fafafa;}
+     .overview-title{margin:0 0 6px;font-size:15px;color:#444;}
+     .overview-sub{margin-left:8px;font-size:13px;font-weight:400;color:#b88230;}
+     /* 每行最右边的操作格。按钮写在行里而不是只放在下面的处置面板里 ——
+          面板只在有异常时才展开，而「给 dorm-b 开个灯」这种念头跟有没有异常无关 */
+     .a1-table td.ops-cell{white-space:nowrap;text-align:right;}
+     .a1-table .row-ops-group{display:inline-block;margin-left:12px;}
+     .a1-table .row-ops-group:first-child{margin-left:0;}
+     .a1-table .row-ops-name{font-size:12px;color:#a08a63;margin-right:3px;}
+     /* 开、关各一个按钮。做成「点一下翻转」的话，用户得先读懂按钮上的字
+        （现在是「开风扇」还是「关风扇」）才知道点下去会发生什么 ——
+        两个按钮都摆出来，按哪个执行哪个，不会有歧义 */
+     .a1-table td.ops-cell .row-ops-btn{
+       margin-left:2px;padding:1px 6px;font-size:12px;
+       border:1px solid #d0b48a;border-radius:4px;background:#fff;color:#8a6d3b;cursor:pointer;
+     }
+     .a1-table td.ops-cell .row-ops-btn:hover{background:#f5ead9;border-color:#b88230;color:#b88230;}
+     /* 反色的那段 = 当前状态。开着的时候是「开」亮，关着的时候是「关」亮 */
+     .a1-table td.ops-cell .row-ops-btn.is-on{background:#e6a23c;border-color:#e6a23c;color:#fff;font-weight:600;}
+     .a1-target{margin:0 0 8px;font-size:13px;color:#8a6d3b;}
+     .a1-target:empty{display:none;}
+     /* 横幅只给结论，这张表把三个宿舍的判定依据摊开 */
+     .a1-table{width:100%;margin:6px 0 8px;border-collapse:collapse;font-size:13px;}
+     .a1-table th,.a1-table td{padding:5px 8px;border-bottom:1px solid #f2e3cb;text-align:left;color:#8a6d3b;font-weight:400;}
+     .a1-table th{padding-bottom:3px;color:#b88230;font-weight:600;}
+     .a1-table tbody tr{cursor:pointer;}
+     .a1-table tbody tr:hover td{background:#fbf1e0;}
+     /* 赢家那行单独高亮：一眼看出规则把它排在了最前面 */
+     .a1-table tbody tr.is-winner td{background:#fdecd2;color:#b88230;font-weight:600;}
+     .a1-table .a1-badge{display:inline-block;margin-left:6px;padding:0 6px;border-radius:8px;font-size:12px;background:#e6a23c;color:#fff;font-weight:500;}
+     .a1-states{margin:0;font-size:13px;color:#8a6d3b;}
+     .a1-states:empty{display:none;}
+     .a1-chip{display:inline-block;margin:0 0 10px;padding:3px 10px;border-radius:10px;font-size:13px;background:#f0f0f0;color:#666;}
+     .a1-chip:empty{display:none;}
+     .a1-chip.handling{background:#fdf0d5;color:#b88230;}
+     .a1-chip.recovered{background:#e8f6e8;color:#4a9c4a;}
+     .a1-chip.attention{background:#fdecec;color:#c45656;}
+     .a1-ops{display:flex;gap:8px;flex-wrap:wrap;}
+     .ops-btn{padding:6px 14px;border:1px solid #d0b48a;border-radius:6px;background:#fff;color:#6b5a3e;font-size:14px;cursor:pointer;}
+     .ops-btn:hover{background:#f5ead9;}
+     .a1-hint{margin:8px 0 0;font-size:13px;color:#f56c6c;}
+     .a1-hint:empty{display:none;}
    </style>
  </head>
  <body>
    <h1>DormMate 宿舍温湿度看板</h1>
    <p class="conn" id="connStatus">连接中…</p>
    <p class="conn" id="depStatus"></p>
+   <!-- 三宿舍总览。常驻显示，不跟着 A1 面板一起隐藏 ——「现在哪个宿舍有问题」
+        是随时要问的问题，不该等出了异常才答得上来。三个宿舍并排列出，
+        优先的那行高亮：只给赢家一行的话，用户没法自己核对「凭什么排它第一」。
+        点某一行 = 进那个宿舍的房间，和横幅、按钮走同一个入口 -->
+   <div class="overview">
+     <h3 class="overview-title">三宿舍总览<span class="overview-sub" id="overviewSub"></span></h3>
+     <table class="a1-table" id="a1Table">
+       <thead>
+         <tr><th>宿舍</th><th>异常类型</th><th>已持续</th><th>异常次数</th><th>操作</th></tr>
+       </thead>
+       <tbody id="a1TableBody"></tbody>
+     </table>
+   </div>
+   <!-- A1 优先提示 + A2 处置按钮。没有异常宿舍时整块隐藏（脚本里控制 display）——
+        常态下不该常驻一个「暂无异常」的空框占着版面 -->
+   <div class="a1-panel" id="a1Panel" style="display:none">
+     <p class="a1-banner" id="a1Banner" title="点击查看该宿舍详情"></p>
+     <p><span class="a1-chip" id="a1Chip"></span></p>
+     <!-- 其余宿舍的处置状态。只讲赢家的话，刚判完「已恢复」的宿舍会随着赢家换人
+          一起从视野里消失，用户拿不到自己那次操作的结果 -->
+     <p class="a1-states" id="a1States"></p>
+     <!-- 按钮作用于 A1 选中的宿舍。不点明是哪个宿舍的话，用户按下去不知道动的是哪间房 -->
+     <p class="a1-target" id="a1Target"></p>
+     <!-- 只有模式三个：学习/睡眠/离寝，一次把灯和设备的组合定下来。
+          单件的开关（风扇 / 灯 / 除湿机）全部搬到上面总览表的行里去 ——
+          同一个宿舍一件设备的开关，页面上只留一个入口。
+          这里再摆一份的话，两边都要读同一份状态才对得上，
+          而这里的按钮还只作用在 A1 选中的那一个宿舍上，是按哪个宿舍全看当前谁在异常 -->
+     <div class="a1-ops">
+       <button class="ops-btn" data-mode="study" onclick="doMode('study', event)">学习模式</button>
+       <button class="ops-btn" data-mode="sleep" onclick="doMode('sleep', event)">睡眠模式</button>
+       <button class="ops-btn" data-mode="away"  onclick="doMode('away', event)">离寝模式</button>
+     </div>
+     <p class="a1-hint" id="a1Hint"></p>
+   </div>
    <!-- 顶部3张状态卡片 -->
    <div class="card-wrap">
-     <div class="card">
-       <h3>Dorm-A</h3>
+     <div class="card" id="cardA">
+       <h3>Dorm-A<span class="card-tag"></span></h3>
        <p>温度：<span id="tempA">--</span> ℃</p>
        <p>湿度：<span id="humA">--</span> %</p>
        <p>状态：<span id="statusA">--</span></p>
+       <p class="card-stale" id="staleA"></p>
      </div>
-     <div class="card">
-       <h3>Dorm-B</h3>
+     <div class="card" id="cardB">
+       <h3>Dorm-B<span class="card-tag"></span></h3>
        <p>温度：<span id="tempB">--</span> ℃</p>
        <p>湿度：<span id="humB">--</span> %</p>
        <p>状态：<span id="statusB">--</span></p>
+       <p class="card-stale" id="staleB"></p>
      </div>
-     <div class="card">
-       <h3>Dorm-C</h3>
+     <div class="card" id="cardC">
+       <h3>Dorm-C<span class="card-tag"></span></h3>
        <p>温度：<span id="tempC">--</span> ℃</p>
        <p>湿度：<span id="humC">--</span> %</p>
        <p>状态：<span id="statusC">--</span></p>
+       <p class="card-stale" id="staleC"></p>
      </div>
    </div>
-   <!-- 节点切换按钮 -->
+   <!-- 进入宿舍房间：跳 3d 页面（趋势图 + 3D 房间在同一页），带 ?node= 指明是哪个宿舍 -->
    <div class="btn-group">
-     <button class="btn" onclick="switchNode('dorm-a', event)">查看DormA</button>
-     <button class="btn" onclick="switchNode('dorm-b', event)">查看DormB</button>
-     <button class="btn" onclick="switchNode('dorm-c', event)">查看DormC</button>
+     <button class="btn" data-node="dorm-a" onclick="openRoom('dorm-a', event)">查看DormA</button>
+     <button class="btn" data-node="dorm-b" onclick="openRoom('dorm-b', event)">查看DormB</button>
+     <button class="btn" data-node="dorm-c" onclick="openRoom('dorm-c', event)">查看DormC</button>
    </div>
    <!-- 选中节点详情面板 -->
    <div class="detail">
@@ -86,6 +183,7 @@
      <p>实时温度：<span id="detailTemp">--</span></p>
      <p>实时湿度：<span id="detailHum">--</span></p>
      <p>运行状态：<span id="detailStatus">--</span></p>
+     <p class="detail-stale" id="detailStale"></p>
    </div>
    <!-- 趋势图区域 -->
    <div class="chart-box">
@@ -97,6 +195,10 @@
      <p class="chart-note" id="humChartTime">等待数据…</p>
    </div>
   
+ <!-- A1 判定内核。纯函数库，dashboard 和 3d 两个页面共用同一份 ——
+      各写一份的话，两页对「哪个宿舍最值得关注」可能给出不同答案，
+      页面上看不出谁对谁错。必须排在主 script 之前（主 script 里要读 window.DormMateA1） -->
+ <script src="../a1/priority.js"></script>
  <script>
  // MQTT 服务端地址候选，按顺序试，第一个连上的留下
  // 浏览器只能通过 WebSocket 说 MQTT，说不了裸 TCP —— 这是浏览器沙箱的限制，不是 mqtt.js 的限制。
@@ -166,7 +268,7 @@
      setConn('已连接 ' + url)
      // 必须显式订阅：MQTT 是发布/订阅模型，不订阅 broker 一条消息都不会推送。
      // 原来只有 client.on('message') 而全文件没有 subscribe，所以永远收不到数据。
-     c.subscribe('dormmate/+/env', {qos:0}, (err, granted)=>{
+     c.subscribe(['dormmate/+/env', 'dormmate/+/ops'], {qos:0}, (err, granted)=>{
        if(err){ setConn('订阅失败：' + err.message, true); return }
        setConn('已订阅 ' + granted.map(g=>g.topic).join(', ') + '   via ' + url)
      })
@@ -257,19 +359,29 @@
 
    // 未知节点不往下走：d 是 undefined，读 d.temperature 会抛 TypeError，
    // 页面上表现为「点了完全没反应」，反而不如直接说清楚
-   if(!d){
+   if(NODES.indexOf(nodeId) < 0){
      console.warn('⚠️未知节点，无法切换：', nodeId)
      return
    }
 
+   // 已知但还没收到过数据的宿舍照常选中：先占位成 --，等它第一条报文到了
+   // 由 refreshDetail 那一处自动补上。点【查看DormX】时那个宿舍可能一条数据都还没发过，
+   // 这时候什么都不做的话，用户看到的是「点了按钮，详情区还是未选择」
    selectedNode = nodeId
    document.getElementById('selectNode').innerText = nodeId
-   document.getElementById('detailTemp').innerText = d.temperature
-   document.getElementById('detailHum').innerText = d.humidity
-   document.getElementById('detailStatus').innerText = d.status
-   //按钮高亮
-   document.querySelectorAll('.btn').forEach(btn=>btn.classList.remove('active'))
-   if(ev && ev.target) ev.target.classList.add('active')
+   document.getElementById('detailTemp').innerText = d ? d.temperature : '--'
+   document.getElementById('detailHum').innerText = d ? d.humidity : '--'
+   document.getElementById('detailStatus').innerText = d ? d.status : '--'
+   // 详情区跟卡片一样得说清楚这个值是不是实时的，否则同一屏里
+   // 卡片写着「上次会话的值」、详情区却理直气壮地显示同一个数字
+   const stale = document.getElementById('detailStale')
+   if(stale) stale.innerText = isStaleAbnormal(nodeId) ? STALE_TEXT : ''
+   //按钮高亮：按 data-node 找按钮，不再依赖 ev.target。
+   //A1 横幅和 ?node= 深链都是程序化调用 switchNode，没有 ev 可依 ——
+   //原来那种写法在程序化调用时会把三个按钮的高亮全清掉，看起来像没选中任何宿舍
+   document.querySelectorAll('.btn[data-node]').forEach(btn=>{
+     btn.classList.toggle('active', btn.dataset.node === nodeId)
+   })
  }
 
  // 状态兜底计算：与 web/script.js、analysis.py 的判定规则保持一致
@@ -378,7 +490,43 @@
        temp: serializeChart(chartTemp),
        hum:  serializeChart(chartHum),
        store: dataStore,
-       last: lastSyncLabel
+       last: lastSyncLabel,
+       a1: a1Tracker,
+       dev: NODES.reduce(function(acc, node){
+         const fsm = fsmState[node]
+         if(fsm) acc[node] = {fan:!!fsm.devices.fan, dehumidifier:!!fsm.devices.dehumidifier,
+                              light:!!fsm.devices.light, mode:fsm.mode}
+         return acc
+       }, {}),
+       // 和 dev 并列单独存一份：3d 要拿它区分「用户关掉的」和「从没设过的」。
+       // 混进 dev 里那份的话，copyDevices（只认三个设备键）会把它顺手丢掉
+       touched: NODES.reduce(function(acc, node){
+         const fsm = fsmState[node]
+         if(!fsm) return acc
+         const t = fsm.touched || {}
+         acc[node] = {fan:!!t.fan, dehumidifier:!!t.dehumidifier, light:!!t.light, mode:!!t.mode}
+         return acc
+       }, {}),
+       // 处置状态机走到哪一步了（处理中 / 已恢复 / 仍需关注）。
+       // 三个状态都得活过刷新：用户开完风扇除湿机、后续报文还没到的时候刷新一下，
+       // 面板上的「处理中」凭空消失，等于把他刚做的那次处置抹掉了；
+       // 「已恢复」同理，得先让他看见再退场（保留期见 VERDICT_HOLD_MS）。
+       // verdictReadings 也要一起存：处置后已经攒到几条报文，决定了还差几条才下结论，
+       // 不存的话刷新一次就退回 0 条，结论永远差两条
+       fsm: NODES.reduce(function(acc, node){
+         const fsm = fsmState[node]
+         if(fsm) acc[node] = {state:fsm.state, episodeId:fsm.episodeId,
+                              concludedAt:fsm.concludedAt, readings:fsm.verdictReadings}
+         return acc
+       }, {})
+       // 存「看板展示」用的东西：三张卡片、两条趋势线、最后同步时间，
+       // 外加三样状态 —— A1 每个宿舍的异常段（起点 / 次数 / 类型）、
+       // 设备开关与模式、处置状态机。
+       // 异常段必须存：卡片上的温度、湿度、状态都能从 store 恢复，
+       // 唯独次数和计时不恢复的话，刷新后同一行里「异常类型」写着「偏热+偏湿」，
+       // 「已持续」「异常次数」却是 —，三个格子自相矛盾。
+       // 设备开关也是「当前状态」，和卡片上的温湿度是一类东西，不是「这一轮的统计」——
+       // 不存的话刷新后表格里全变「关」，而 3d 房间里的除湿机还在转
      }))
    }catch(e){
      // 隐私模式、配额满、被浏览器策略禁用都会抛。存不下不该影响看板本身，记一条就够
@@ -401,6 +549,71 @@
    if(s.store){
      Object.keys(dataStore).forEach(function(node){
        if(s.store[node]) Object.assign(dataStore[node], s.store[node])
+     })
+   }
+   // A1 的异常段恢复回来（起点 / 次数 / 类型），表格的三列才说得通 ——
+   // 只恢复类型不恢复次数和计时的话，刷新后会出现「偏热+偏湿 · — · —」这种行。
+   // 恢复进来的每一项都要验过才用：localStorage 是用户能随手改的地方，
+   // 一个字符串形式的 abnormalSince 会让后面每个算式都变成 NaN，
+   // 而 NaN 一路渗进 durationText 只会渲染出「NaN 分钟」这种看不懂的东西
+   if(A1 && s.a1 && typeof s.a1 === 'object'){
+     NODES.forEach(function(node){
+       const e = s.a1[node]
+       const since = (e && typeof e.abnormalSince === 'number' && isFinite(e.abnormalSince) && e.abnormalSince > 0)
+         ? e.abnormalSince : null
+       const kind = (e && typeof e.kind === 'string' && A1.ALERT_TEXT[e.kind]) ? e.kind : null
+       // 三样必须自洽：没有起点、说不出类型，就不该留着次数 ——
+       // 否则表格里会冒出一行「正常」却有 3 次异常的记录
+       if(since === null || kind === null){
+         a1Tracker[node] = {abnormalSince:null, count:0, kind:null}
+         return
+       }
+       const n = (e && typeof e.count === 'number' && isFinite(e.count)) ? Math.floor(e.count) : 1
+       a1Tracker[node] = {abnormalSince:since, kind:kind, count:Math.max(1, n)}
+     })
+   }
+   // 设备开关恢复回来。它是「执行器现在的状态」，和卡片上的温湿度是一类东西：
+   // 不恢复的话，刷新后总览表里三组按钮全亮在「关」，而 3d 房间里的除湿机还在转 ——
+   // 同一件事两个说法，用户只能靠猜哪个是真的。
+   if(s.dev && typeof s.dev === 'object'){
+     NODES.forEach(function(node){
+       const e = s.dev[node]
+       if(!e || typeof e !== 'object') return
+       const fsm = fsmOf(node)
+       fsm.devices = copyDevices(e)
+       fsm.mode = MODE_LABEL[e.mode] ? e.mode : null
+     })
+   }
+   // 「用户碰过哪几件」跟着设备状态一起恢复。它必须和 dev 同生共死 ——
+   // 少了它，刷新一次之后 dashboard 就再也说不清哪些设备是用户设的，
+   // 3d 那边同步过去就全部当成「没碰过」，用户明明关掉的风扇又自己转起来。
+   // 存档里没有这一项（老版本写的）时保持 fsmOf 给的空白：一律算没碰过，
+   // 交还给环境驱动 —— 这个方向错得比较轻，不会凭空多出一次「关」的指令
+   if(s.touched && typeof s.touched === 'object'){
+     NODES.forEach(function(node){
+       const t = s.touched[node]
+       if(!t || typeof t !== 'object') return
+       fsmOf(node).touched = {fan:!!t.fan, dehumidifier:!!t.dehumidifier,
+                              light:!!t.light, mode:!!t.mode}
+     })
+   }
+   // 处置状态恢复回来：处理中 / 已恢复 / 仍需关注。
+   // 每一项都验过才用 —— 认不出的 state 会渲染出一个空白的状态章，
+   // 坏掉的 readings 会让「已恢复」的判定拿脏数据去比
+   if(s.fsm && typeof s.fsm === 'object'){
+     NODES.forEach(function(node){
+       const e = s.fsm[node]
+       if(!e || typeof e !== 'object') return
+       if(FSM_STATES.indexOf(e.state) < 0) return
+       const fsm = fsmOf(node)
+       fsm.state = e.state
+       fsm.episodeId = (typeof e.episodeId === 'number' && isFinite(e.episodeId)) ? e.episodeId : null
+       fsm.concludedAt = (typeof e.concludedAt === 'number' && isFinite(e.concludedAt)) ? e.concludedAt : 0
+       // 只认「报文」形状的对象；条数上限 20 是防手改出来的超长数组
+       fsm.verdictReadings = (Array.isArray(e.readings) ? e.readings : [])
+         .filter(function(r){ return r && typeof r === 'object' })
+         .slice(0, 20)
+         .map(function(r){ return {temp:r.temp, hum:r.hum, status:r.status, abnormal:!!r.abnormal} })
      })
    }
    restoreChart(chartTemp, s.temp)
@@ -445,8 +658,669 @@
    return null
  }
 
+// ==================== A1~A4：异常发现 → 处置 → 验证 → 复盘 ====================
+// 这一段是整个闭环的「大脑」，全部逻辑只在 dashboard 里跑：
+//   3d 页面没有操作按钮，事件写入权给它必然和这里重复记账。
+// 三段职责：
+//   A1 判定内核（a1/priority.js）+ 横幅
+//   A2 处置动作 → 本页状态 + MQTT 广播给 3d → 后端事件日志
+//   A3 处置后自动验证：攒够 2 条新报文自己下结论，没有「手动标记恢复」这种按钮
+
+// 内核没加载成功时不拦页面：横幅不显示，看板其余部分照常工作。
+// （head 里那几个 CDN 已经有过先例 —— 一个附加模块不该把主功能拖下水）
+const A1 = window.DormMateA1
+const a1Tracker = A1 ? A1.createTracker() : {}
+
+// 本页的会话 id。MQTT 会把消息回显给发布者自己，靠它认出「这条是我发的」，
+// 避免一次点击被記两遍（见 onOpsMessage）
+const SELF_OPS_ID = 'dash-' + Math.random().toString(16).slice(2, 10)
+
+// 上一次报进事件日志的优先宿舍。priority 只在赢家变化时记一条 ——
+// 每条报文都记的话，一分钟就能把事件日志淹掉
+let lastWinner = null
+
+// 每个节点一个处置状态机：idle →(用户操作)→ handling →(2 条报文)→ recovered / attention
+const fsmState = {}
+
+// 手动开关的设备：风扇、灯、除湿机。
+// 手动开关和「学习/睡眠」模式不冲突：模式是「一次把组合定下来」，
+// 手动按钮是单独拨某一项，拨完 mode 置空（见 applyDevice），两者各自说各自的话。
+// 顺序 = 总览表里三组行内按钮的排列顺序（Object.keys 的遍历序）
+// 风扇、灯、除湿机：前两个是随时可能拨的，除湿机是湿度高时才动
+const DEVICE_LABEL = {fan:'风扇', light:'灯', dehumidifier:'除湿机'}
+const MODE_LABEL = {study:'学习模式', sleep:'睡眠模式', away:'离寝模式'}
+// 模式落到设备上的表现。3d 只认设备状态，模式名另外通过 msg.mode 传过去给房间换色。
+// 离寝 = 人不在，灯灭 + 风扇停 + 除湿机停
+const MODE_DEVICES = {
+  study: {light:true},
+  sleep: {light:false},
+  away:  {light:false, fan:false, dehumidifier:false}
+}
+
+// 判定用的时钟。默认就是本机时钟；测试里可以换成可控假时钟
+// （A1 的规则②要在「时长完全相同」时才比次数，真实时钟下两个毫秒值几乎不可能严格相等，
+//   不注入时钟就没法稳定地测出这条规则）
+let clock = function(){ return Date.now() }
+
+function resetDevices(){ return {fan:false, dehumidifier:false, light:false} }
+function copyDevices(d){ return {fan:!!d.fan, dehumidifier:!!d.dehumidifier, light:!!d.light} }
+
+// 把报文里的设备状态并进现有的一份，只覆盖报文里明确带着的项。
+// 外部指令（MQTTX 里只勾一个除湿机、旧版页面）常常是局部的，
+// 用 copyDevices 整份替换的话，没带的项会被补成 false：
+// 用户只想开除湿机，风扇和灯却一起被关掉了。
+// 3d 那边一直就是逐项判 typeof 合并的，这里必须和它一致 ——
+// 否则同一个 dorm-a 在两个页面上会显示成两套设备状态
+function mergeDevices(dst, src){
+  if(!src || typeof src !== 'object') return dst
+  Object.keys(DEVICE_LABEL).forEach(function(k){
+    if(typeof src[k] === 'boolean') dst[k] = src[k]
+  })
+  return dst
+}
+
+// 处置状态机的全部状态。给用户看的是三个：处理中 / 已恢复 / 仍需关注（文案见 stateText），
+// idle 是「没有处置这回事」的内部值，不显示。
+// 这张表也是 loadState 恢复存档时的白名单：认不出来的 state 一律丢掉，
+// 不然面板上会渲染出一个空白的状态章，比不显示还难懂
+const FSM_STATES = ['idle', 'handling', 'recovered', 'attention']
+
+function fsmOf(node){
+  if(!fsmState[node]){
+    fsmState[node] = {
+      state:'idle',            // FSM_STATES 之一
+      episodeId:null,          // 这一轮处置对应哪一段异常（= 段起点的毫秒时间戳）
+      verdictReadings:[],      // A3 攒的新报文，满 2 条自动下结论
+      concludedAt:0,           // 结论下达的时刻，用于「已恢复/仍需关注」的保留期
+      devices: resetDevices(),
+      mode: null
+    }
+  }
+  return fsmState[node]
+}
+
+function setA1Hint(text){
+  const el = document.getElementById('a1Hint')
+  if(el) el.innerText = text
+}
+
+// ---------- A4：事件上报 ----------
+// 唯一的落盘通道。后端没起时不阻塞、不抛错、不影响看板 —— 只提示一句「没记上」。
+// 事件是「尽量记」，页面功能是「必须能用」，主次不能颠倒
+const API_HOSTS = ['http://localhost:5000', 'http://192.168.171.200:5000']
+let eventChain = Promise.resolve()   // 串行化：本页事件写入顺序 = 事件真实发生顺序
+let eventHintShown = false
+
+// alert / op_text 是给复盘看的两个可读列：异常类型、用户操作。
+// 由页面算好直接落列，复盘时不用再去解析 detail 里那串 JSON
+function postEvent(node, type, detail, alert, op_text){
+  const body = JSON.stringify({
+    node:node,
+    event_type:type,
+    alert: alert || '',
+    op_text: op_text || '',
+    detail:JSON.stringify(detail)
+  })
+
+  function send(base){
+    const ctl = (typeof AbortController === 'function') ? new AbortController() : null
+    // 没有超时的话，网络不通的那个地址会让整条队列一直挂着，后面的事件全排在它后面
+    const timer = ctl ? setTimeout(function(){ ctl.abort() }, 2000) : null
+    return fetch(base + '/api/eventLog', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:body,
+      signal: ctl ? ctl.signal : undefined
+    }).then(function(r){
+      if(timer) clearTimeout(timer)
+      return r.ok
+    })
+  }
+
+  eventChain = eventChain.then(function(){
+    let i = 0
+    const tryNext = function(){
+      if(i >= API_HOSTS.length) return Promise.resolve(false)
+      const base = API_HOSTS[i++]
+      // 单个地址的失败必须在这里吃掉再换下一个：后端没起时 fetch 是 reject（网络层），
+      // 不是「返回非 200」。漏掉这一层的话异常会穿到最外面的 catch，
+      // 提示语永远轮不到执行 —— 用户看到的是「点了按钮什么都没发生」
+      return send(base).catch(function(){ return false })
+        .then(function(ok){ return ok ? true : tryNext() })
+    }
+    return tryNext().then(function(ok){
+      if(ok){
+        if(eventHintShown){ eventHintShown = false; setA1Hint('') }
+      }else if(!eventHintShown){
+        eventHintShown = true
+        setA1Hint('⚠️ 后端未连接，本次事件没有写进事件日志（启动 app.py 后自动恢复记录）')
+      }
+    })
+  }).catch(function(e){
+    console.warn('事件上报失败（不影响看板）：', e)
+  })
+  return eventChain
+}
+
+// ---------- A2：处置动作 ----------
+function publishOps(payload){
+  if(!client || !client.connected){
+    setA1Hint('⚠️ MQTT 未连接，3D 页面不会同步这次操作（事件日志照常记录）')
+    return
+  }
+  client.publish('dormmate/' + payload.node + '/ops', JSON.stringify(payload), {qos:0})
+}
+
+// 开始处置。已经在处理中的话沿用当前 episode，否则新开一轮
+function beginHandling(node){
+  const fsm = fsmOf(node)
+  if(fsm.state !== 'handling'){
+    const entry = a1Tracker[node]
+    fsm.state = 'handling'
+    fsm.episodeId = entry ? entry.abnormalSince : null
+    fsm.verdictReadings = []
+  }
+  return fsm
+}
+
+// 处置动作只能落在「当前最值得关注」的那个宿舍上 —— 按钮点谁就作用在谁身上：
+// 横幅显示的是 dorm-b，按钮却改了 dorm-a 的灯，是最难排查的一类错乱
+function winnerNode(){
+  return A1 ? A1.pick(a1Tracker, clock()).node : null
+}
+
+function guardTarget(){
+  if(!A1) return null
+  const node = winnerNode()
+  if(!node){
+    setA1Hint('当前没有异常宿舍，不需要处置。')
+    return null
+  }
+  const entry = a1Tracker[node]
+  const fsm = fsmState[node]
+  const handling = fsm && fsm.state === 'handling'
+  // 异常段已经结束（且没在处理中）就拒绝：否则会写出一条没有「异常开始」的孤儿处置记录，
+  // 复盘报告里这条 episode 没有开头
+  if(!handling && (!entry || entry.abnormalSince === null)){
+    setA1Hint(node + ' 当前没有进行中的异常，不需要处置。')
+    return null
+  }
+  return node
+}
+
+// 用户操作的中文描述，写进事件日志的 op_text 列
+function deviceOpText(op, on){
+  return (on ? '开启' : '关闭') + (DEVICE_LABEL[op] || op)
+}
+
+// 从一条 ops 报文里反推操作描述（外部指令走这里，本页自己的操作在按钮回调里直接算）
+function opTextOf(msg, devices){
+  if(msg.mode) return '切换到' + (MODE_LABEL[msg.mode] || msg.mode)
+  if(msg.op && DEVICE_LABEL[msg.op]) return deviceOpText(msg.op, !!(devices || {})[msg.op])
+  if(msg.op === 'vent' || msg.op === 'light') return msg.op === 'vent' ? '通风' : '灯'   // 旧版页面发来的，照实记
+  return msg.op ? String(msg.op) : ''
+}
+
+// 该宿舍当前的异常类型文案（正常 → 空串）。
+// 注意不能直接拿 alertText(null)：那会返回兜底文案「异常持续中」，
+// 一条正常报文就会被记成还在异常
+function nodeAlertText(node){
+  const entry = a1Tracker[node]
+  if(!A1 || !entry || entry.abnormalSince === null || !entry.kind) return ''
+  return A1.alertText(entry.kind)
+}
+
+// 真正拨动某个宿舍的某个设备。on 是目标状态，不是「翻转」——
+// 页面上每件设备是「开」「关」两个按钮，按哪个执行哪个，重复点同一个不会有意外
+function applyDevice(node, op, on){
+  const fsm = beginHandling(node)
+  fsm.devices[op] = !!on
+  const turnedOn = fsm.devices[op]
+  fsm.mode = null        // 手动开关设备之后就不再算某个模式了
+  setA1Hint('')
+  // 只声明这次真正拨动的那一件，不发全量。刚打开的页面内存里设备全是关的
+  // （R1：打开即清空），发全量等于宣称「其余设备也都关着」——
+  // 用户开完风扇再开除湿机，后一条就把风扇抹了；两个页面/刷新一下就变成
+  // 「同一个宿舍的风扇和除湿机只能开一个」。接收端两边都是合并语义
+  // （3d 逐项判 typeof、dashboard 走 mergeDevices），收到一件就只改一件
+  const delta = {}
+  delta[op] = turnedOn
+  publishOps({kind:'action', src:SELF_OPS_ID, node:node, ts:clock(), devices:delta, mode:null, op:op})
+  postEvent(node, 'action', {eid:fsm.episodeId, devices:copyDevices(fsm.devices), mode:null, op:op},
+            nodeAlertText(node), deviceOpText(op, turnedOn))
+  renderA1()
+  saveState()
+}
+
+// 总览表行内的按钮：作用在这一行的宿舍上，直接指名。
+// 想给哪个宿舍开风扇就开哪个，跟「谁在异常」无关 —— 这几组开关是随时可用的手动控制，
+// 「先有异常才准操作」那条限制只管 A1 面板里的模式按钮（见 doMode 的 guardTarget）。
+// on 是目标状态（true=开 / false=关），由按的是哪个按钮决定
+function doRowAction(node, op, on){
+  if(NODES.indexOf(node) < 0 || !DEVICE_LABEL[op]) return
+  applyDevice(node, op, on)
+}
+
+function doMode(mode, ev){
+  const node = guardTarget()
+  if(!node || !MODE_DEVICES[mode]) return
+  const fsm = beginHandling(node)
+  const preset = MODE_DEVICES[mode]
+  Object.keys(preset).forEach(function(k){ fsm.devices[k] = preset[k] })
+  fsm.mode = mode
+  setA1Hint('')
+  // 和 applyDevice 同理，只发这个模式真正要断言的那几件：
+  // 学习模式管的是灯，就不该顺带宣称「风扇和除湿机是关的」。
+  // 离寝模式那三件都在 preset 里，全停的语义照样完整发出去
+  publishOps({kind:'action', src:SELF_OPS_ID, node:node, ts:clock(), devices:preset, mode:mode, op:'mode:' + mode})
+  postEvent(node, 'action', {eid:fsm.episodeId, devices:copyDevices(fsm.devices), mode:mode, op:'mode:' + mode},
+            nodeAlertText(node), '切换到' + (MODE_LABEL[mode] || mode))
+  renderA1()
+  saveState()
+}
+
+// A3 下结论。没有「手动标记恢复」这条路 —— 结论只能由后续报文得出来
+function concludeHandling(node, result){
+  const fsm = fsmOf(node)
+  fsm.state = result
+  fsm.concludedAt = clock()      // 结论的保留期从这里起算（见 busyState）
+  // 结论不是人点的，是系统按报文判的，op_text 就照实写
+  postEvent(node, 'verdict', {eid:fsm.episodeId, result:result, readings:fsm.verdictReadings.length},
+            '', '系统自动判定')
+  // 结论只改状态，不碰设备。用户为了压住这次异常开的风扇和除湿机，
+  // 不该在系统判「已恢复」的这一瞬间被系统自己关掉 —— 房间里正在转的东西突然停了，
+  // 用户只会以为自己哪里点错了。什么时候关是用户的决定，不是判定内核的
+  publishOps({kind:'verdict', src:SELF_OPS_ID, node:node, ts:clock(), result:result})
+  renderA1()
+  saveState()
+}
+
+// ---------- A1：判定与横幅 ----------
+function refreshWinner(){
+  if(!A1) return
+  const result = A1.pick(a1Tracker, clock())
+  // 赢家换了才记一条优先处理理由。null → X 也算变化（第一个异常出现）
+  if(result.node && result.node !== lastWinner){
+    postEvent(result.node, 'priority', {
+      eid: a1Tracker[result.node].abnormalSince,
+      reason: result.reason,
+      durationMs: result.durationMs,
+      count: result.count
+    }, A1.alertText(result.kind))
+  }
+  lastWinner = result.node
+  renderA1()
+}
+
+// 设备/模式的文字描述。处理中的状态章要能一眼看出「现在开着什么」
+function opsSummary(fsm){
+  const parts = []
+  if(fsm.mode) parts.push(MODE_LABEL[fsm.mode] || fsm.mode)
+  Object.keys(DEVICE_LABEL).forEach(function(k){
+    if(fsm.devices[k]) parts.push(DEVICE_LABEL[k] + '已开启')
+  })
+  if(!parts.length) parts.push('设备均未开启')
+  return parts.join('、')
+}
+
+// 处置后拿第几条报文定结论。用户定的规矩是 1 —— 按下按钮之后收到的头一条报文
+// 就是判定依据：它正常就是「已恢复」，还异常就是「仍需关注」。
+// 两边对称，不偏袒哪一侧：25℃/70% 判已恢复，25℃/80%（湿度仍超标）判仍需关注
+const VERDICT_NEED = 1
+
+// 「处理中」是最容易被读成卡住的一档 —— 把系统还在等什么写出来
+function progressText(fsm){
+  const got = fsm.verdictReadings.length
+  if(got === 0) return ''
+  // 正常路径走不到这里：头一条报文就把结论定了。留着是防存档里的旧值 ——
+  // loadState 可能恢复出一轮「处理中且已经攒了几条」的旧状态，那时不该显示空白
+  return '已收到 ' + got + ' 条报文'
+}
+
+// 一个宿舍的结论章文案。状态章和「其他宿舍」那一行共用，措辞不会分叉
+function stateText(fsm){
+  if(fsm.state === 'handling') return '处理中｜' + opsSummary(fsm) + ' · ' + progressText(fsm)
+  if(fsm.state === 'recovered') return '已恢复｜处置后第 ' + VERDICT_NEED + ' 条报文已正常（系统自动判定）'
+  if(fsm.state === 'attention') return '仍需关注｜处置后第 ' + VERDICT_NEED + ' 条报文仍异常（系统自动判定）'
+  return ''
+}
+
+// 处置结束后结论要留一会儿再收。判完就让面板消失的话，用户看到的是
+// 「处理中」突然没了，而不是「已恢复」——A3 要的恰恰是这次可见的状态切换。
+// 超过保留期就交还给 A1 的常态（没有异常就不占版面）
+const VERDICT_HOLD_MS = 5 * 60 * 1000
+function busyState(n){
+  const fsm = fsmState[n]
+  if(!fsm) return ''
+  if(fsm.state === 'handling') return stateText(fsm)
+  if(fsm.state === 'recovered' || fsm.state === 'attention'){
+    const held = clock() - (fsm.concludedAt || 0)
+    if(held < VERDICT_HOLD_MS) return stateText(fsm)
+  }
+  return ''
+}
+
+// 本次会话已收到过报文的宿舍。loadState() 会把 localStorage 里的旧值恢复进 dataStore，
+// 但那些值是不是「现在」的，页面并不知道 —— 没有这个集合就会出现自相矛盾的一幕：
+// 卡片显示 17.9℃/80%「偏冷偏湿」（上次会话留下的），
+// 而 A1 按 R1 的要求每次打开都清零，总览表同时写着「暂无异常宿舍」。
+// 两个数据源各说各话，看的人只能懵。
+const freshNodes = {}
+const STALE_TEXT = '上次会话的值，本次未收到新报文'
+
+// 这个宿舍现在显示的是不是「上次会话留下的」值。
+// 只看异常的：正常的旧值不需要人确认，全标出来只会让三行都变灰、没人再看
+function isStaleAbnormal(n){
+  if(freshNodes[n]) return false                 // 本次收到过报文，值就是实时的
+  const d = dataStore[n]
+  if(!d || d.temperature === '--') return false  // 一次都没上报过，显示的是占位符 --，没有「旧值」可言
+  // 判据和表格的「异常类型」列同一个来源（卡片上那句原文），
+  // 不然会出现「卡片挂了提示、表格却说正常」这种同一屏里打架的事
+  return (d.status || '正常') !== '正常'
+}
+
+// 表格里这个宿舍的状态。直接取卡片上「状态：」那一句的原文 ——
+// 表格重算、卡片显示报文原文的话，同一个宿舍会出现「偏冷+偏湿」和「偏冷偏湿」两种写法，
+// 用户只会以为是两个不同的结论。一屏之内同一件事必须只有一种说法。
+// 一次都没上报过的显示「正常」（占位符 -- 不该被读成异常）。
+// 注意：这里管的是「显示」，A1 的优先级判定仍然一律用本地阈值重算，两件事不混
+function overviewStatus(n){
+  const d = dataStore[n]
+  if(!d || d.temperature === '--') return {text:'正常', abnormal:false, hasValue:false}
+  const text = d.status || '正常'
+  return {text:text, abnormal:text !== '正常', hasValue:true}
+}
+
+// 三宿舍总览表：一个宿舍一行，最右边直接给操作按钮。
+// 「异常类型」这一列只回答「它怎么了」（偏冷 / 偏湿 / 偏冷偏湿），
+// 不带「持续低温偏湿」那种规则味 —— 规则是横幅那句结论的事，
+// 表格这列要的是一眼能读懂。
+// 「已持续」「异常次数」来自本页的异常段计时（loadState 从 localStorage 恢复的）。
+// 真的一次都没有过（A1 外链脚本没加载成功、或存档是加这个字段之前存的）就如实空着（—），
+// 不写 0（那是「没发生过」的意思）
+function renderOverview(result, now){
+  const tbody = document.getElementById('a1TableBody')
+  if(!tbody) return
+  tbody.innerText = ''                      // 三个节点，整表重建的代价可以忽略
+  NODES.forEach(function(n){
+    const entry = a1Tracker[n]
+    const since = entry ? entry.abnormalSince : null
+    const isWinner = result.node === n
+    const st = overviewStatus(n)
+    // 计时和次数只有在「类型列也说它异常」时才拿出来。
+    // 类型列读的是报文原文、计时读的是异常段，两者的来源不同，
+    // 不做这道闸门就可能排出「正常 · 12 分钟 · 3 次」这种自己打自己的行
+    const counted = st.abnormal && since !== null && since !== undefined
+
+    const tr = document.createElement('tr')
+    if(isWinner) tr.className = 'is-winner'
+
+    const tdNode = document.createElement('td')
+    tdNode.innerText = n
+    if(isWinner){
+      const badge = document.createElement('span')
+      badge.className = 'a1-badge'
+      badge.innerText = '优先'
+      tdNode.appendChild(badge)
+    }
+    tr.appendChild(tdNode)
+
+    const cells = [
+      st.text,
+      counted ? A1.durationText(now - since) : '—',
+      counted ? String(entry.count || 0) : '—'
+    ]
+    cells.forEach(function(v){
+      const td = document.createElement('td')
+      td.innerText = v
+      tr.appendChild(td)
+    })
+
+    // 操作格：每台设备两个按钮（开 / 关），作用在这一行的宿舍上（不是 A1 的赢家）。
+    // 当前状态用反色标出来：开着的时候「开」是亮的，不用去别处找
+    const tdOps = document.createElement('td')
+    tdOps.className = 'ops-cell'
+    const fsm = fsmOf(n)
+    Object.keys(DEVICE_LABEL).forEach(function(op){
+      const label = DEVICE_LABEL[op]
+      const on = !!fsm.devices[op]
+      const group = document.createElement('span')
+      group.className = 'row-ops-group'
+      const name = document.createElement('span')
+      name.className = 'row-ops-name'
+      name.innerText = label
+      group.appendChild(name)
+      ;[['开', true], ['关', false]].forEach(function(pair){
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'row-ops-btn' + (on === pair[1] ? ' is-on' : '')
+        btn.innerText = pair[0]
+        btn.title = n + '：' + pair[0] + label
+        btn.addEventListener('click', function(ev){
+          // 整行是可点的（进 3D 房间），按钮不能顺带把行也触发一遍
+          ev.stopPropagation()
+          if(ev.preventDefault) ev.preventDefault()
+          doRowAction(n, op, pair[1])       // 给的是目标状态，不是「翻转」，重复点同一个不会有意外
+        })
+        group.appendChild(btn)
+      })
+      tdOps.appendChild(group)
+    })
+    tr.appendChild(tdOps)
+
+    tr.title = '点击进入 ' + n + ' 的房间'
+    tr.addEventListener('click', function(ev){ openRoom(n, ev) })
+    tbody.appendChild(tr)
+  })
+
+  // 表标题右边一句把结论收掉。没有异常时明说「暂无」，不留空 ——
+  // 空着的话用户分不清是「都正常」还是「根本没收到数据」
+  const sub = document.getElementById('overviewSub')
+  if(sub){
+    // 表格里还挂着异常值、本次会话却没收到报文时，不能说「暂无异常」——
+    // 那种情况下三列全是上次会话留下的，说清楚出处，用户才知道这些数不是实时算的
+    const staleAbn = NODES.filter(function(n){ return !freshNodes[n] && overviewStatus(n).abnormal }).length
+    const staleNote = staleAbn ? ' · 上次会话的值，本次未收到新报文' : ''
+    if(result.node) sub.innerText = '当前优先：' + result.node + '（' + A1.whyText(result) + '）' + staleNote
+    else if(staleAbn) sub.innerText = '本次会话还没收到报文，表中异常状态来自上次会话'
+    else sub.innerText = '暂无异常宿舍'
+  }
+}
+
+// 把同一个结论再落到三张卡片上：优先的挂「优先关注」，其余仍在异常的挂「异常」。
+// 用户第一眼看的是卡片区，结论只写在横幅里的话，还得先找到横幅才知道该看哪张卡
+function markCards(result){
+  NODES.forEach(function(n,i){
+    const el = document.getElementById('card' + ['A','B','C'][i])
+    if(!el) return
+    const entry = a1Tracker[n]
+    const abnormal = !!(entry && entry.abnormalSince !== null)
+    const isWinner = result.node === n
+    el.classList.toggle('is-win', isWinner)
+    el.classList.toggle('is-alert', abnormal && !isWinner)
+    const tag = el.querySelector('.card-tag')
+    if(tag) tag.innerText = isWinner ? '优先关注' : (abnormal ? '异常' : '')
+    // 数字照旧显示（趋势图还能接上），但得说清楚这是上次会话的，
+    // 不然用户拿一个不知道多久以前的读数当实时值看
+    const stale = el.querySelector('.card-stale')
+    if(stale) stale.innerText = isStaleAbnormal(n) ? STALE_TEXT : ''
+  })
+}
+
+function renderA1(){
+  const panel = document.getElementById('a1Panel')
+  if(!panel || !A1) return
+  // 一次渲染只读一次时钟：总览表、横幅、卡片标的是同一个 now，
+  // 不然几处各读一次，「已持续」能差出一秒
+  const now = clock()
+  const result = A1.pick(a1Tracker, now)
+  // 总览表和卡片标记是常驻的，必须排在下面「没有异常就 return」之前 ——
+  // 三个宿舍都正常的时候，用户照样该看见这一点
+  renderOverview(result, now)
+  markCards(result)
+
+  const busy = NODES.filter(function(n){ return busyState(n) })
+
+  if(!result.node && !busy.length){
+    // 既没有异常宿舍，也没有未收尾的处置 —— 没有可讲的事，整块收起
+    panel.style.display = 'none'
+    return
+  }
+  panel.style.display = ''
+
+  const banner = document.getElementById('a1Banner')
+  if(result.node){
+    banner.innerText = '当前最值得关注：' + A1.describe(result).text
+    banner.className = 'a1-banner'
+    banner.title = '点击进入该宿舍的 3D 房间与趋势图'
+  }else{
+    // 异常段已经结束、结论还在保留期内：横幅没有指向的目标，就不能再假装有
+    banner.innerText = '当前没有异常宿舍（下面是最近一次处置的结果）'
+    banner.className = 'a1-banner is-idle'
+    banner.title = ''
+  }
+
+  // 按钮作用于哪个宿舍，写在按钮上方。不点明的话，用户按下去不知道动的是哪间房
+  const target = document.getElementById('a1Target')
+  if(target){
+    target.innerText = result.node
+      ? '处置对象：' + result.node + '（' + A1.whyText(result) + '）'
+      : '当前没有异常宿舍，按钮暂不可用'
+  }
+
+  // 状态章只讲赢家：横幅指向谁，按钮就作用在谁身上，状态章跟着横幅走才不会错位
+  const chip = document.getElementById('a1Chip')
+  const winText = result.node ? stateText(fsmOf(result.node)) : ''
+  chip.innerText = winText
+  chip.className = 'a1-chip' + (winText ? ' ' + fsmOf(result.node).state : '')
+
+  // 其余宿舍的处置状态单独一行
+  const states = document.getElementById('a1States')
+  if(states){
+    states.innerText = busy.filter(function(n){ return n !== result.node })
+      .map(function(n){ return n + '：' + busyState(n) }).join('　')
+  }
+}
+
+// ---------- A3：每条报文都过一遍 ----------
+// kind = 本条报文的异常类型（A1.kindOf 算出来的五种之一，正常为 null）。
+// 传类型而不是布尔量：告警文案要按类型自动匹配，判定内核还得把它记进当前异常段
+function handleA1(node, temp, hum, status, kind){
+  if(!A1) return
+  // 整段收在 try 里：onMessage 的大 catch 会把这里抛出的任何错报成「解析消息出错」，
+  // 并且中断它后面的卡片和趋势图更新 —— 附加功能不该连累主功能
+  try{
+    const entry = a1Tracker[node]
+    const wasAbnormal = !!(entry && entry.abnormalSince !== null)
+    const prevSince = entry ? entry.abnormalSince : null
+    const now = clock()
+    A1.feed(a1Tracker, node, kind, now)
+    const isAbnormal = a1Tracker[node].abnormalSince !== null
+    const fsm = fsmOf(node)
+
+    if(!wasAbnormal && isAbnormal){
+      // 一段新的异常开始：计时从这一刻起算，次数从 1 起数
+      postEvent(node, 'anomaly_start', {eid:a1Tracker[node].abnormalSince, status:status, temp:temp, hum:hum},
+                A1.alertText(a1Tracker[node].kind))
+      // 上一轮的处置结论不能挂在这一段上。但正在处理中的那一轮不清 ——
+      // 处置还没结束，中途把状态机推倒重来会让用户刚点的操作凭空消失。
+      // 这里只重置处置流程本身（结论、轮次、已攒的报文），设备一律不动：
+      // 新来一段异常不代表用户刚开的除湿机就该关
+      if(fsm.state !== 'handling'){
+        fsm.state = 'idle'
+        fsm.episodeId = null
+        fsm.verdictReadings = []
+      }
+    }else if(wasAbnormal && !isAbnormal && fsm.state === 'idle'){
+      // 异常自己好了、用户一次都没处置过：给它一个终点，
+      // 复盘报告里才不会永远挂着一条「未完结」
+      postEvent(node, 'verdict', {eid:prevSince, result:'natural', readings:0}, '', '系统自动判定')
+    }
+
+    if(fsm.state === 'handling'){
+      fsm.verdictReadings.push({temp:temp, hum:hum, status:status, abnormal:isAbnormal})
+      postEvent(node, 'reading', {
+        eid:fsm.episodeId, seq:fsm.verdictReadings.length, temp:temp, hum:hum, status:status
+      }, nodeAlertText(node))
+      // 处置后的头 VERDICT_NEED 条报文就定结论，正常判已恢复、异常判仍需关注。
+      // 这一条报文是用户按下按钮之后系统拿到的第一个证据，等第二条反而会把
+      // 「处理中」拖长成看起来卡住的状态
+      if(fsm.verdictReadings.length >= VERDICT_NEED){
+        const recovered = fsm.verdictReadings.slice(0, VERDICT_NEED).every(function(r){ return !r.abnormal })
+        concludeHandling(node, recovered ? 'recovered' : 'attention')
+      }
+    }
+
+    refreshWinner()
+  }catch(e){
+    console.warn('A1 处理出错（不影响看板其余功能）：', e)
+  }
+}
+
+// 外部发来的处置动作（MQTTX 手工发的、或另一个页面发的）。
+// 本页自己发的那条不回环：本地已经应用过了，再应用一次会变成「按一下动两下」。
+// src 缺失（手工拼的报文）一律当成外部动作处理
+function onOpsMessage(topic, payload){
+  let msg
+  try{
+    msg = JSON.parse(payload.toString())
+  }catch(e){
+    console.warn('处置报文不是合法 JSON，已忽略：', payload.toString())
+    return
+  }
+  if(msg && msg.src && msg.src === SELF_OPS_ID) return
+  const node = msg && msg.node
+  if(!dataStore[node]){
+    console.warn('⚠️未知节点的处置报文，已忽略：', node)
+    return
+  }
+  try{
+    const fsm = fsmOf(node)
+    if(msg.kind === 'verdict'){
+      // 结论只改状态，不碰设备 —— 和 concludeHandling 同一条规矩
+      if(msg.result === 'recovered' || msg.result === 'attention') fsm.state = msg.result
+    }else{
+      beginHandling(node)
+      // 合并而不是替换：外部报文可能只带一件设备（见 mergeDevices）
+      mergeDevices(fsm.devices, msg.devices)
+      fsm.mode = msg.mode || null
+      // 外部动作也进事件日志，否则复盘报告里会出现「设备自己开了」这种断线。
+      // op_text 后面缀上来源：复盘时要能分清这次是页面上点的还是别人用 MQTTX 发的
+      const extOp = opTextOf(msg, fsm.devices)
+      postEvent(node, 'action', {
+        eid:fsm.episodeId, devices:copyDevices(fsm.devices), mode:fsm.mode,
+        op:msg.op || null, src:'external'
+      }, nodeAlertText(node), extOp ? extOp + ' · 外部指令' : '外部指令')
+    }
+    renderA1()
+    saveState()
+  }catch(e){
+    console.warn('处置报文处理出错（不影响看板）：', e)
+  }
+}
+
+// ?node=dorm-b 深链：3d 页面点横幅跳过来时用。
+// 必须排在 loadState 之后 —— loadState 里的 renderFromStore 会用上次选中的节点覆盖它
+function applyQueryNode(){
+  let q = null
+  try{
+    q = new URLSearchParams(location.search).get('node')
+  }catch(e){ /* 极老的浏览器没有 URLSearchParams，退化成不带深链 */ }
+  if(q && NODES.indexOf(q) >= 0) switchNode(q)
+}
+
+// 给测试留的观察窗（控制台里也能直接用）
+window.DormMateDash = {
+  tracker: a1Tracker,
+  fsm: fsmState,
+  setClock: function(fn){ clock = fn },
+  pick: function(){ return A1 ? A1.pick(a1Tracker, clock()) : null }
+}
+
 // MQTT消息到达
 function onMessage(topic, payload){
+  // 处置主题走另一条路（它和温湿度报文的结构、来源都不同）
+  if(/^dormmate\/[^/]+\/ops$/.test(topic)){ onOpsMessage(topic, payload); return }
   const raw = payload.toString()
   try{
     const msg = JSON.parse(raw)
@@ -481,10 +1355,22 @@ function onMessage(topic, payload){
     // 横坐标用 payload 里的 time；发布端没给、或给的格式解析不了，才退回浏览器本地时钟
     const t = parseTime(msg.time) || {label: new Date().toLocaleString(), epoch: Date.now()}
 
-    //保存数据到仓库
+    // A1~A4：判定用的异常类型一律用本地阈值重算，不采信 payload 里的 status ——
+    // 发布端把 31℃ 标成「正常」的话，卡片显示正常、判定却在按异常处理，两边各说各话。
+    // 阈值仍是那一套（t<18 偏冷 / t>=30 偏热 / h>=75 偏湿），没有改动；
+    // 类型判定和状态文案用的是同一套阈值，两处结论不会打架
+    const recomputed = computeStatus(temp, hum)
+    // 写仓库必须排在 handleA1 前面。handleA1 内部会重渲染总览表和卡片，
+    // 而总览表的「异常类型」读的正是 dataStore —— 顺序反过来的话，
+    // 这次渲染出来的是上一条报文的值：一条 31℃ 的报文到了，表里还写着「正常」，
+    // 要等下一条报文才追上，中间那一瞬是错的
     dataStore[node].temperature = temp
     dataStore[node].humidity = hum
     dataStore[node].status = status
+    // 这一条报文就是「本次收到了新数据」的证据，「上次会话的值」提示要立刻撤掉。
+    // 同样得排在 handleA1 之前，不然撤不掉
+    freshNodes[node] = true
+    handleA1(node, temp, hum, recomputed, A1 ? A1.kindOf(temp, hum) : null)
 
     // 更新顶部卡片
     if(node === 'dorm-a'){
@@ -506,6 +1392,8 @@ function onMessage(topic, payload){
       document.getElementById('detailTemp').innerText = temp
       document.getElementById('detailHum').innerText = hum
       document.getElementById('detailStatus').innerText = status
+      const stale = document.getElementById('detailStale')
+      if(stale) stale.innerText = ''    // 值已经是实时的了
     }
 
     // 推进两张趋势图。nodeIndex 决定这次的值落进哪条曲线（dorm-a→0，dorm-b→1，dorm-c→2），
@@ -520,9 +1408,36 @@ function onMessage(topic, payload){
   }
 }
 
+// 进入某个宿舍的房间：趋势图 + 3D 房间都在 3d 页，带 ?node= 告诉它是哪个宿舍。
+// 点一下做两件事：
+//   ① 本页的【选中宿舍详情】先选中这个宿舍，之后每条报文都会实时刷新它；
+//   ② 新标签页打开 3D 房间。
+// 用新标签而不是本页跳走：跳走的话本页连同刚填好的详情一起消失，
+// 「详情区实时刷新」这件事就永远看不见了
+function openRoom(node, ev){
+  if(ev && ev.preventDefault) ev.preventDefault()
+  if(NODES.indexOf(node) < 0) return
+  switchNode(node)
+  // noopener：新页面拿不到本页的 window 引用，避免它反向操作本页
+  window.open('../3d/index.html?node=' + encodeURIComponent(node), '_blank', 'noopener')
+}
+
+// A1 横幅点一下 = 进那个宿舍的房间（横幅上的宿舍名 dorm-b 就是入口）
+const a1BannerEl = document.getElementById('a1Banner')
+if(a1BannerEl){
+  a1BannerEl.addEventListener('click', function(){
+    const node = winnerNode()
+    if(node) openRoom(node)
+  })
+}
+
 // 启动：先把上次刷新的数据摆回来，再连 broker。
 // 顺序反过来的话，恢复过程会覆盖掉刚收到的新消息
 loadState()
+// 恢复出来的赢家先静默认下来，免得第一条报文到了又记一条重复的 priority 事件
+if(A1) lastWinner = A1.pick(a1Tracker, clock()).node
+renderA1()
+applyQueryNode()      // 深链优先级最高，放最后覆盖上面两步选中的节点
 startClient(WS_CANDIDATES[0])
  </script>
  </body>

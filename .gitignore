@@ -5,14 +5,23 @@ __pycache__/
 *.pyd
 *.log
 
-# report目录规则: 只保留 trend.png、report.html，其余临时文件忽略
+# report目录规则：只保留 trend.png、report.html，其余临时文件忽略
 report/*
 !report/trend.png
 !report/report.html
 
-# data目录规则: 只保留正式数据 dormmate.csv，调试期的临时导出忽略
-# （不含 dormmate.csv —— 下划线是必需的，通配符不会误伤它）
+# data目录规则：只保留正式数据 dormmate.csv，调试期的临时导出忽略
+# （不含 dormmate_*.csv — 下划线是必需的，通配符不会误伤它）
 data/dormmate_*.csv
+
+# A4 事件日志：一次处置闭环就写一批，属于运行时产物（复盘报告的输入），不进 git。
+# 想留档就把这个文件单独复制出去 — 报告里的事件复盘板块是从它生成的
+data/events.csv
+
+# 媒体文件（照片/视频/录音）是运行时产物，体积大且可重新采集，不进 git.
+# CSV 里只存文件名索引，完整备份需要单独复制这个文件夹 — 所以它必须留在 .gitignore 里
+# 不然一次提交就可能塞进几十 MB 二进制
+data/media/
 
 # VSCode本地配置文件
 .vscode/

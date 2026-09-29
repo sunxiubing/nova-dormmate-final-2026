@@ -1,0 +1,1310 @@
+<!DOCTYPE html>
+ <html lang="zh-CN">
+ <head>
+ <meta charset="UTF-8">
+ <title>M6 3D宿舍 暖色调 | 立体加厚镜子</title>
+ <style>
+     * { margin: 0; padding: 0; }
+     body { overflow: hidden; }
+     canvas { display: block; }
+     /* 顶部 MQTT 发布面板。position:fixed + z-index 压住脚本运行时 append 的 canvas。
+        放右上角：左上角留给 A1 横幅 + 处理动作，两块一左一右，正常窗口宽度下互不重叠 */
+     #pubPanel {
+         position: fixed; right: 18px; top: 18px; z-index: 30;
+         display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap;
+         max-width: calc(100vw - 240px);
+         padding: 12px 14px; border: 1px solid #6b5a3e; border-radius: 12px;
+         background: rgba(48,40,30,.92); color: #ffe9c2;
+         font: 13px/1.4 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+     }
+     #pubPanel .pub-field { display: flex; flex-direction: column; gap: 4px; }
+     #pubPanel label { font-size: 12px; opacity: .85; }
+     #pubPanel select, #pubPanel input {
+         padding: 7px 9px; border: 1px solid #6b5a3e; border-radius: 8px;
+         background: rgba(28,23,17,.9); color: #ffe9c2;
+         font: 13px/1.2 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+     }
+     #pubPanel input { width: 78px; }
+     #pubPanel button {
+         padding: 8px 16px; border: 1px solid #6b5a3e; border-radius: 10px;
+         background: #8a6d3b; color: #fff6e5; cursor: pointer;
+         font: 14px/1.3 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+     }
+     #pubPanel button:hover { background: #a1804a; }
+     /* flex-basis 100% 把提示挤到独立一行，不跟控件挤在同一行里换行错位 */
+     #pubTip { flex-basis: 100%; margin: 0; font-size: 12px; opacity: .8; }
+     #pubTip.is-error { color: #ffb4a8; opacity: 1; }
+     /* A1 横幅 + 处理动作：左上角（原来那组测试按钮的位置，按钮删掉后这里空出来了）。
+        为什么不继续顶部居中：居中的话会被右上角的发布面板横向压住 —— 实测横幅 464px 宽
+        有 310px 盖在面板底下，而「用户的处理动作」正好在被盖的那一段里，等于白写。
+        z-index 仍低于发布面板：真撞上了也要保证发送按钮点得到
+        position:fixed 是必需的 —— canvas 是脚本运行时 append 到 body 的，
+        静态定位的元素会被它盖住（和上面两个面板同一个理由） */
+     #a1Banner3d {
+         position: fixed; left: 18px; top: 18px; z-index: 20;
+         max-width: min(420px, calc(50vw - 30px)); padding: 10px 16px;
+         border: 1px solid #6b5a3e; border-radius: 12px;
+         background: rgba(48,40,30,.92); color: #ffe9c2; cursor: pointer;
+         font: 14px/1.4 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+     }
+     #a1Banner3d:hover { background: rgba(72,60,44,.96); }
+     /* 没有异常宿舍时的灰态：还留在页面上（让人知道这块功能在），但不可点 */
+     #a1Banner3d.is-idle { cursor: default; opacity: .5; }
+     #a1Banner3d.is-idle:hover { background: rgba(48,40,30,.92); }
+     /* 第二行：用户最近一次处理动作。独立成行、独立更新 ——
+        原来是把处理状态章拼在优先横幅那一行里，只有「被操作的宿舍恰好等于当前最值得关注
+        的那个」才拼得上去；操作 dorm-a 而横幅显示 dorm-b 时，右边什么都看不到 */
+     #a1OpsText {
+         margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(107,90,62,.5);
+         font-size: 12px; opacity: .92;
+     }
+     #a1OpsText.is-empty { opacity: .5; }
+     /* 趋势图面板：右下角。
+        为什么放右下角：左上角是 A1 横幅、右上角是发布面板，只剩右下这块是空的。
+        z-index 与发布面板同级（30），但两者一个贴顶一个贴底，高度再撑也不会撞上。
+        窄窗口下宽度跟着收缩，不会盖住左半边 */
+     #trendPanel {
+         position: fixed; right: 18px; bottom: 18px; z-index: 30;
+         width: 380px; max-width: calc(100vw - 40px);
+         padding: 12px 14px; border: 1px solid #6b5a3e; border-radius: 12px;
+         background: rgba(48,40,30,.92); color: #ffe9c2;
+         font: 13px/1.4 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+     }
+     #trendPanel h3 { margin: 0 0 8px; font-size: 13px; font-weight: 400; opacity: .9; }
+     /* 宿舍切换标签。默认停在「自动」（跟最新到达的报文走）：
+        3D 房间只有一个，谁发数据就显示谁，图跟着房间走才不会出现
+        「外面发 dorm-b、图上死等 dorm-a」这种一个点都不出的场面 */
+     #trendTabs { display: flex; gap: 6px; margin-bottom: 8px; }
+     #trendTabs button {
+         flex: 1; padding: 4px 0; border: 1px solid #6b5a3e; border-radius: 8px;
+         background: rgba(28,23,17,.9); color: #ffe9c2; cursor: pointer;
+         font: 12px/1.2 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+     }
+     #trendTabs button:hover { background: rgba(72,60,44,.96); }
+     #trendTabs button.is-active { background: #8a6d3b; color: #fff6e5; }
+     /* 容器必须有确定高度：canvas 配 maintainAspectRatio:false 时是按父元素高度撑的，
+         父元素不定高就会被压成 0，图上什么都看不见 */
+     #trendWrap { position: relative; height: 170px; }
+     #trendEmpty { margin: 8px 0 0; font-size: 12px; opacity: .75; }
+     #trendEmpty:empty { display: none; }
+ </style>
+ </head>
+ <body>
+<!-- A1 优先提示：哪个宿舍现在最值得关注。判定内核与 dashboard 共用同一份
+     （a1/priority.js），两个页面不会给出不同答案。
+     点一下 = 跳到 dashboard 并自动选中那个宿舍（带上 ?node=） -->
+<div id="a1Banner3d">
+    <div id="a1BannerText">当前无异常</div>
+    <div id="a1OpsText" class="is-empty">用户操作：暂无</div>
+</div>
+<!-- 趋势图：dashboard 的【查看DormX】和告警横幅都跳到这里（带 ?node=X），
+     一页里同时给出「这个宿舍的曲线」和「这个宿舍的 3D 房间」 -->
+<div id="trendPanel">
+    <h3 id="trendTitle">DormA 实时趋势（温度 / 湿度）</h3>
+    <div id="trendTabs">
+        <button type="button" data-node="auto" class="is-active">自动</button>
+        <button type="button" data-node="dorm-a">A</button>
+        <button type="button" data-node="dorm-b">B</button>
+        <button type="button" data-node="dorm-c">C</button>
+    </div>
+    <div id="trendWrap"><canvas id="trendCanvas"></canvas></div>
+    <p id="trendEmpty">等待该宿舍的数据…</p>
+</div>
+<!-- 顶部发布面板：填温湿度 → 前端本地算 status → 发到 dormmate/{nodeId}/env。
+     页面自己也订阅了 dormmate/+/env，所以这条消息会绕 broker 一圈回来驱动 3D 模型，
+     效果和 MQTTX 手动发一条完全一样 -->
+<div id="pubPanel">
+    <div class="pub-field">
+        <label for="pubNode">宿舍节点</label>
+        <select id="pubNode">
+            <option value="dorm-a">dorm-a</option>
+            <option value="dorm-b">dorm-b</option>
+            <option value="dorm-c">dorm-c</option>
+        </select>
+    </div>
+    <div class="pub-field">
+        <label for="pubTemp">温度 ℃（-20 ~ 60）</label>
+        <input id="pubTemp" type="number" step="0.1" min="-20" max="60" value="25">
+    </div>
+    <div class="pub-field">
+        <label for="pubHum">湿度 %（0 ~ 100）</label>
+        <input id="pubHum" type="number" step="0.1" min="0" max="100" value="60">
+    </div>
+    <button type="button" id="pubSend">发送MQTT消息</button>
+    <p id="pubTip">发布到 dormmate/{nodeId}/env</p>
+</div>
+<!-- mqtt.js：订阅 broker 用，版本与 dashboard 保持一致。
+     主源 + 三个备用源，国内网络或代理经常拦掉 jsdelivr，缺了它 mqtt.connect 会抛
+     ReferenceError，所以后面几个 <script> 用 document.write 兜底，前一个没拉到时补下一个 -->
+<script src="https://cdn.jsdelivr.net/npm/mqtt@4.3.7/dist/mqtt.min.js"></script>
+<script>if (typeof mqtt === 'undefined') document.write('<script src="https://cdn.bootcdn.net/ajax/libs/mqtt/4.3.7/mqtt.min.js"><\/script>')</script>
+<script>if (typeof mqtt === 'undefined') document.write('<script src="https://cdn.staticfile.org/mqtt/4.3.7/mqtt.min.js"><\/script>')</script>
+<script>if (typeof mqtt === 'undefined') document.write('<script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"><\/script>')</script>
+ <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+ <!-- Chart.js：趋势图用，版本与 dashboard 的完全一致。
+      同样配三个备用源兜底，缺了它只是趋势图画不出来，3D 场景照常 -->
+ <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
+ <script>if (typeof Chart === 'undefined') document.write('<script src="https://cdn.bootcdn.net/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"><\/script>')</script>
+ <script>if (typeof Chart === 'undefined') document.write('<script src="https://cdn.staticfile.org/Chart.js/4.4.1/chart.umd.min.js"><\/script>')</script>
+ <script>if (typeof Chart === 'undefined') document.write('<script src="https://unpkg.com/chart.js@4.4.1/chart.umd.js"><\/script>')</script>
+ <!-- A1 判定内核，和 dashboard 共用同一份。必须排在本段主脚本之前 -->
+ <script src="../a1/priority.js"></script>
+ <script>
+ // 基础场景
+ const scene = new THREE.Scene();
+ scene.background = new THREE.Color(0x282828);
+ const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 200);
+ camera.position.set(0, 2.4, 7.5);
+ const renderer = new THREE.WebGLRenderer();
+ renderer.setSize(window.innerWidth, window.innerHeight);
+ document.body.appendChild(renderer.domElement);
+ // 暖光
+ const ambientLight = new THREE.AmbientLight(0xfff3dd, 0.62);
+ scene.add(ambientLight);
+ const dirLight = new THREE.DirectionalLight(0xffe9c2, 0.72);
+ dirLight.position.set(5,7,6);
+ scene.add(dirLight);
+ // ===================== 房间主体【保留你截图的原始三面墙+地板】 =====================
+ const floorGeo = new THREE.PlaneGeometry(8, 6);
+ const floorMat = new THREE.MeshBasicMaterial({ color:0xd9c8a6, side: THREE.DoubleSide });
+ const floor = new THREE.Mesh(floorGeo, floorMat);
+ floor.rotation.x = -Math.PI / 2;
+ scene.add(floor);
+ const wallMat = new THREE.MeshBasicMaterial({ color:0xf4ead9, side: THREE.DoubleSide });
+ //后墙
+ const backWallGeo = new THREE.PlaneGeometry(8, 3);
+ const backWall = new THREE.Mesh(backWallGeo, wallMat);
+ backWall.position.set(0, 1.5, -3);
+ scene.add(backWall);
+ //左墙
+ const sideWallGeo = new THREE.PlaneGeometry(6, 3);
+ const leftWall = new THREE.Mesh(sideWallGeo, wallMat);
+ leftWall.rotation.y = Math.PI / 2;
+ leftWall.position.set(-4, 1.5, 0);
+ scene.add(leftWall);
+ //右墙
+ const rightWall = new THREE.Mesh(sideWallGeo, wallMat);
+ rightWall.rotation.y = -Math.PI / 2;
+ rightWall.position.set(4, 1.5, 0);
+ scene.add(rightWall);
+ //天花板：补上第 4 面，房间成为「地板 + 三面墙 + 天花板」的封闭盒子
+ //法线朝下 + 单面渲染（FrontSide）：从房间内部看得见天花板，
+ //但相机升到屋顶以上时这一面会被自动剔除，不会出现「俯视只看到一块挡板、内部全被遮住」
+ const ceilingGeo = new THREE.PlaneGeometry(8, 6);
+ const ceilingMat = new THREE.MeshBasicMaterial({ color:0xe6d9c0, side: THREE.FrontSide });
+ const ceiling = new THREE.Mesh(ceilingGeo, ceilingMat);
+ ceiling.rotation.x = Math.PI / 2;
+ ceiling.position.set(0, 3, 0);
+ scene.add(ceiling);
+ // ===================== 1. 四田字格窗户 =====================
+ function createWindow() {
+     const group = new THREE.Group();
+     const frameMat = new THREE.MeshBasicMaterial({ color:0x8c8479 });
+     const glassMat = new THREE.MeshBasicMaterial({
+         color:0xb5d3ec,
+         transparent:true,
+         opacity:0.42,
+         side:THREE.DoubleSide
+     });
+     //外窗框
+     const outerFrame = new THREE.Mesh(new THREE.BoxGeometry(2.4,1.5,0.14), frameMat);
+     group.add(outerFrame);
+     //中间横竖分割条，做成田字4格
+     const crossHorizontal = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.09,0.15), frameMat);
+     crossHorizontal.position.y = 0;
+     group.add(crossHorizontal);
+     const crossVertical = new THREE.Mesh(new THREE.BoxGeometry(0.09,1.3,0.15), frameMat);
+     crossVertical.position.x = 0;
+     group.add(crossVertical);
+     //4块玻璃
+     const glassGeo = new THREE.PlaneGeometry(1.0,0.58);
+     const glassPositions = [
+         [-0.58,  0.46, 0.08],
+         [ 0.58,  0.46, 0.08],
+         [-0.58, -0.46, 0.08],
+         [ 0.58, -0.46, 0.08]
+     ];
+     glassPositions.forEach(p=>{
+         const glassMesh = new THREE.Mesh(glassGeo, glassMat);
+         glassMesh.position.set(p[0], p[1], p[2]);
+         group.add(glassMesh);
+     });
+     //位置由外面那层铰链 pivot 摆（见 createWindowPivot），这里只管窗户自身的形状
+     return group;
+ }
+ // 窗户要能「推开」，就得先解决旋转轴：这扇窗的子部件都是围绕窗心建模的，
+ // 直接转它等于绕中心转 —— 看起来是旋转门，不是推开窗。
+ // 所以外面再包一层 pivot 摆在窗的左边缘，窗户整体相对 pivot 右移半个窗宽（2.4/2），
+ // 动画只转 pivot，看上去就是绕左侧合页向外推
+ function createWindowPivot() {
+     const pivot = new THREE.Group();
+     const win = createWindow();
+     win.position.set(1.2, 0, 0);
+     pivot.add(win);
+     pivot.position.set(-1.2, 1.65, -2.96);   // 左边缘：窗心 (0,1.65,-2.96) 往左 1.2
+     pivot.userData.window = win;
+     return pivot;
+ }
+ const windowObj = createWindowPivot();
+ scene.add(windowObj);
+ // ===================== 2. 上床下桌（宿舍标准款：上床+完整书桌+板凳） =====================
+ function createDormBunk() {
+     const group = new THREE.Group();
+     const woodMainMat = new THREE.MeshBasicMaterial({color:0xd6a368});
+     const deskMat = new THREE.MeshBasicMaterial({color:0xdbb079});
+     const mattressMat = new THREE.MeshBasicMaterial({color:0xf7efe1});
+     //床4根支撑立柱
+     const postGeo = new THREE.BoxGeometry(0.13, 2.45, 0.13);
+     const postList = [
+         [-1.05, 1.22, 0.48],
+         [ 1.05, 1.22, 0.48],
+         [-1.05, 1.22,-0.48],
+         [ 1.05, 1.22,-0.48]
+     ];
+     postList.forEach(p=>{
+         const post = new THREE.Mesh(postGeo, woodMainMat);
+         post.position.set(p[0], p[1], p[2]);
+         group.add(post);
+     });
+     //床板
+     const bedBoard = new THREE.Mesh(new THREE.BoxGeometry(2.25,0.19,1.15), woodMainMat);
+     bedBoard.position.y = 1.88;
+     group.add(bedBoard);
+     //床垫
+     const mattress = new THREE.Mesh(new THREE.BoxGeometry(2.15,0.19,1.05), mattressMat);
+     mattress.position.y = 2.11;
+     group.add(mattress);
+     //床边护栏
+     const bedRail = new THREE.Mesh(new THREE.BoxGeometry(2.2,0.36,0.06), woodMainMat);
+     bedRail.position.set(0,2.28,0.54);        group.add(bedRail);
+     //【下方书桌】桌面
+     const deskTop = new THREE.Mesh(new THREE.BoxGeometry(1.85,0.09,0.62), deskMat);
+     deskTop.position.set(0,0.76,0);
+     group.add(deskTop);
+     //书桌四条桌腿
+     const deskLegGeo = new THREE.BoxGeometry(0.09,0.76,0.09);
+     const deskLegList = [
+         [-0.90, 0.38,  0.28],
+         [ 0.90, 0.38,  0.28],
+         [-0.90, 0.38, -0.28],
+         [ 0.90, 0.38, -0.28]
+     ];
+     deskLegList.forEach(p=>{
+         const leg = new THREE.Mesh(deskLegGeo, deskMat);
+         leg.position.set(p[0], p[1], p[2]);
+         group.add(leg);
+     });
+     //【配套椅子】
+     const chairMat = new THREE.MeshBasicMaterial({color:0xca955e});
+     const chairSeat = new THREE.Mesh(new THREE.BoxGeometry(0.44,0.07,0.44), chairMat);
+     chairSeat.position.set(0, 0.43, 0.52);
+     group.add(chairSeat);
+     const chairBack = new THREE.Mesh(new THREE.BoxGeometry(0.44,0.44,0.07), chairMat);
+     chairBack.position.set(0, 0.65, 0.71);
+     group.add(chairBack);
+     const chairLegGeo = new THREE.BoxGeometry(0.06,0.43,0.06);
+     const chairLegList = [
+         [-0.19, 0.215, 0.33],
+         [ 0.19, 0.215, 0.33],
+         [-0.19, 0.215, 0.71],
+         [ 0.19, 0.215, 0.71]
+     ];
+     chairLegList.forEach(p=>{
+         const leg = new THREE.Mesh(chairLegGeo, chairMat);
+         leg.position.set(p[0], p[1], p[2]);
+         group.add(leg);
+     });
+     //整体放在房间左后侧
+     group.position.set(-2.5, 0, -2.0);
+     return group;
+ }
+ const bunkBed = createDormBunk();
+ scene.add(bunkBed);
+ // ===================== 3.【加厚立体大镜子】突出，一眼能看见 =====================
+ function createMirror() {
+     const group = new THREE.Group();
+     //加厚镜框，立体！
+     const frameMat = new THREE.MeshBasicMaterial({color:0xb98d5d});
+     const mirrorMat = new THREE.MeshBasicMaterial({
+         color:0xffffff,  //镜面提亮，非常显眼
+         transparent:true,
+         opacity:0.92,
+         side:THREE.DoubleSide
+     });
+     //镜框加厚，宽一点，立体感
+     const mirrorFrame = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.7, 0.15), frameMat);
+     group.add(mirrorFrame);
+     //镜面
+     const mirrorFace = new THREE.Mesh(new THREE.PlaneGeometry(1.12, 1.52), mirrorMat);
+     mirrorFace.position.z = 0.08;
+     group.add(mirrorFace);
+     //重点：往外挪一点，不要贴死墙！！！高度调到视线中间
+     group.position.set(3.7,1.3, -0.4);
+     group.rotation.y = -Math.PI/2;
+     return group;
+ }
+ const mirrorObj = createMirror();
+ scene.add(mirrorObj);
+ // ===================== 4. 吊扇【吸顶安装，默认黄色】 =====================
+ const FAN_YELLOW = 0xffd54f;     //偏冷：黄色
+ const FAN_HOT_RED = 0xff3b30;    //偏热：红色
+ const FAN_GREEN = 0x4caf50;      //常温（18≤temp<30）：绿色
+ function createCeilingFan() {
+     const group = new THREE.Group();
+     //吸顶底盘 + 吊杆 + 电机外壳：固定件，永远不转
+     const mountMat = new THREE.MeshBasicMaterial({ color:0x9c9384 });
+     const mountPlate = new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.22,0.06,20), mountMat);
+     mountPlate.position.y = -0.04;
+     group.add(mountPlate);
+     const drod = new THREE.Mesh(new THREE.CylinderGeometry(0.045,0.045,0.26,12), mountMat);
+     drod.position.y = -0.20;
+     group.add(drod);
+     const motor = new THREE.Mesh(new THREE.CylinderGeometry(0.17,0.12,0.17,20), mountMat);
+     motor.position.y = -0.41;
+     group.add(motor);
+     //扇叶单独一层：只有这一层绕 Y 轴旋转，底盘/吊杆/电机保持不动
+     const blades = new THREE.Group();
+     blades.position.y = -0.46;
+     //扇叶材质独立出来 —— updateScene 要靠它改颜色
+     const bladeMat = new THREE.MeshBasicMaterial({ color: FAN_YELLOW });
+     const bladeGeo = new THREE.BoxGeometry(0.95, 0.03, 0.26);
+     for (let i = 0; i < 3; i++) {
+         const arm = new THREE.Group();
+         arm.rotation.y = (Math.PI * 2 / 3) * i;
+         const blade = new THREE.Mesh(bladeGeo, bladeMat);
+         blade.position.x = 0.55;     //沿半径往外伸
+         blade.rotation.z = 0.07;     //轻微上翘，更像实物
+         arm.add(blade);
+         blades.add(arm);
+     }
+     const hubCap = new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.13,0.05,20), bladeMat);
+     blades.add(hubCap);
+     group.add(blades);
+     group.position.set(0, 2.97, 0);  //贴住天花板(y=3)
+     group.userData.blades = blades;
+     group.userData.bladeMat = bladeMat;
+     return group;
+ }
+ const ceilingFan = createCeilingFan();
+ scene.add(ceilingFan);
+ // ===================== 5. 除湿器【镜子旁边，默认粉色】 =====================
+ const DEHUMID_PINK = 0xff9ec4;        //待机：粉色
+ const DEHUMID_WET_YELLOW = 0xffd54f;  //偏湿：黄色
+ function createDehumidifier() {
+     const group = new THREE.Group();   //只管摆位置，不参与缩放
+     //内层单独一层，以底面 y=0 为基准做呼吸缩放 —— 缩放锚点落在地面上，
+     //放大缩小都是「贴着地面长高变胖」，不会像直接缩放外层那样整机跟着上下漂
+     const body = new THREE.Group();
+     const shellMat = new THREE.MeshBasicMaterial({ color: DEHUMID_PINK });
+     const darkMat = new THREE.MeshBasicMaterial({ color: 0x6b5a4a });
+     //机身
+     const shell = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.66,0.42), shellMat);
+     shell.position.y = 0.36;
+     body.add(shell);
+     //顶盖
+     const top = new THREE.Mesh(new THREE.BoxGeometry(0.52,0.05,0.44), shellMat);
+     top.position.y = 0.71;
+     body.add(top);
+     //出风格栅
+     const vent = new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.13,0.06,16), darkMat);
+     vent.position.y = 0.75;
+     body.add(vent);
+     //正面进气口
+     const intake = new THREE.Mesh(new THREE.BoxGeometry(0.3,0.24,0.03), darkMat);
+     intake.position.set(0, 0.44, 0.215);
+     body.add(intake);
+     //底部水箱
+     const tank = new THREE.Mesh(new THREE.BoxGeometry(0.53,0.1,0.45), darkMat);
+     tank.position.y = 0.05;
+     body.add(tank);
+     group.add(body);
+     group.position.set(3.36, 0, 0.95);  //镜子旁边、靠右墙，离墙面留出余量
+     group.rotation.y = -0.35;           //稍微转向房间中间，方便看到正面
+     group.userData.body = body;
+     group.userData.shellMat = shellMat;
+     return group;
+ }
+ const dehumidifier = createDehumidifier();
+ scene.add(dehumidifier);
+ // ===================== 5.5 台灯【A2 的「学习/睡眠/离寝」靠它表达】 =====================
+ // 整场景都是 MeshBasicMaterial，不参与光照计算 —— 所以「开灯」不能靠加光源：
+ // 加一盏 PointLight 在画面上什么都不会发生。这里让灯罩自己换颜色，
+ // 亮 = 暖黄，灭 = 暗灰。房间整体的明暗同样做不了（材质根本不响应光照），
+ // 所以「睡眠模式」在画面上表现为熄灯，而不是把整个房间调暗
+ const LAMP_ON = 0xffe9a0;
+ const LAMP_OFF = 0x55503f;
+ function createLamp() {
+     const group = new THREE.Group();
+     const standMat = new THREE.MeshBasicMaterial({ color: 0x8c7a63 });
+     //灯罩和灯泡共用这一份材质，换色时整盏灯一起亮/灭
+     const lampMat = new THREE.MeshBasicMaterial({ color: LAMP_OFF });
+     const base = new THREE.Mesh(new THREE.CylinderGeometry(0.10,0.10,0.04,16), standMat);
+     base.position.y = 0.02;
+     group.add(base);
+     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.018,0.40,10), standMat);
+     pole.position.y = 0.24;
+     group.add(pole);
+     const shade = new THREE.Mesh(new THREE.CylinderGeometry(0.09,0.16,0.17,18), lampMat);
+     shade.position.y = 0.50;
+     group.add(shade);
+     const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.05,12,10), lampMat);
+     bulb.position.y = 0.42;
+     group.add(bulb);
+     group.userData.lampMat = lampMat;
+     return group;
+ }
+ const deskLamp = createLamp();
+ deskLamp.position.set(-1.9, 0.80, -2.0);   //书桌桌面上（桌面高 0.76，再留一点厚度）
+ scene.add(deskLamp);
+ //全局对象挂载，方便后续对接MQTT
+ window.objects = {
+     window: windowObj,
+     bed: bunkBed,
+     mirror: mirrorObj,
+     fan: ceilingFan,
+     dehumidifier: dehumidifier,
+     lamp: deskLamp
+ };
+ // ===================== 6. 全局状态 + updateScene(temp, hum[, node]) =====================
+ // sceneState 只有两个布尔量，渲染循环按它俩决定设备动不动
+ const sceneState = { fanSpinning: false, breathing: false };
+ // A2 的人工处置状态。和环境驱动的 sceneState 分开存，两个理由：
+ //   1) sceneState 的字段名被测试逐字锁着（只认 fanSpinning / breathing 两个键），
+ //      往里加字段会直接踩坏那套断言
+ //   2) 语义不同：sceneState 是「温湿度让设备怎么动」，opsState 是「人让它怎么动」。
+ //      人优先 —— 刚点开的风扇不该被下一条正常温湿度报文当场关停
+ // null = 没被人接管，听环境的；true/false = 人设过，一直按它来
+ // 必须声明在 animate() 之前：animate 在脚本里是立刻调用的，晚一步就是 TDZ 报错
+ // dehumidifier = 除湿机（dashboard 上「开/关除湿机」按钮）
+// vent 保留了：dashboard 上那个「开/关通风」按钮已按需求删除，但推窗这件事本身还在 ——
+// 外部用 MQTTX 手工发一条 devices.vent=true 照样能把窗户推开，去掉这个键等于顺手删功能
+//
+// 三个宿舍各存一份。之前只有一份全局的，谁最后被操作谁说了算：
+// dorm-a 开着的除湿机在切到 dorm-b 之后照样转，dorm-b 的操作又会把 dorm-a 的画面覆盖掉。
+// 屏幕上的房间只有一个，但它代表哪个宿舍是能选的（右下角 自动/A/B/C），
+// 那就得让「显示哪一个」和「读哪一份状态」对上
+ const NODE3 = ['dorm-a', 'dorm-b', 'dorm-c'];
+ function newOps(){ return { fan:null, vent:null, dehumidifier:null, light:null, mode:null }; }
+ const opsByNode = { 'dorm-a':newOps(), 'dorm-b':newOps(), 'dorm-c':newOps() };
+ // 环境驱动的结果同样按宿舍存：三个宿舍的报文都在往这里灌，
+ // 只有一份的话，谁最后发报文房间就变成谁的样子
+ const envByNode = { 'dorm-a':null, 'dorm-b':null, 'dorm-c':null };
+ const lastEnvOf = { 'dorm-a':null, 'dorm-b':null, 'dorm-c':null };
+ // 当前显示的是哪个宿舍。赋值只发生在 setTrendNode 里（切档位、自动档跟报文）
+ let shownNode = 'dorm-a';
+ // opsState 始终指向「当前显示的那个宿舍」那一份，切宿舍时换绑。
+ // 保留这个名字：animate() 每帧读它，持久化也按它写，改名只会多出一堆要同步的地方
+ let opsState = opsByNode['dorm-a'];
+ // 推开窗户的目标角度（弧度）。0 = 关。通风 = 推窗，这是「通风」在画面上的表现
+ const WINDOW_OPEN_ANGLE = -0.55;
+ // 温湿度 → 视觉的换算，只算不落地。
+ // 入参是原始读数（数字），不是状态字符串，阈值判断全在这里做。
+ // 吊扇三档：temp>=30 红+转 ／ temp<18 黄+停 ／ 18<=temp<30 绿+停
+ // 除湿器两档：hum>=75 黄+呼吸 ／ hum<75 粉+停
+ function envOf(temp, hum) {
+     const isHot  = temp >= 30;
+     const isCold = temp < 18;
+     const isWet  = hum >= 75;
+     return {
+         fanSpinning: isHot,
+         bladeHex: isHot ? FAN_HOT_RED : (isCold ? FAN_YELLOW : FAN_GREEN),
+         breathing: isWet,
+         shellHex: isWet ? DEHUMID_WET_YELLOW : DEHUMID_PINK
+     };
+ }
+ // 把某个宿舍的环境状态落到画面上（颜色 + 渲染循环读的那两个布尔量）。
+ // 这个宿舍一次报都没收到过时按 25℃/60% 的中性配色显示：切过去看到的是「正常」，
+ // 而不是上一个宿舍的颜色留在画面上 —— 那会让人以为这个宿舍也偏热/偏湿。
+ // 中性配色对应的就是吊扇绿、除湿机粉、两者都不动，和页面上「25℃/60% 算正常」的约定一致
+ function applyEnv(node) {
+     const e = envByNode[node] || envOf(25, 60);
+     sceneState.fanSpinning = e.fanSpinning;
+     sceneState.breathing = e.breathing;
+     // 颜色不在这里定：它得同时看环境和人的开关（见 applyDeviceColors），
+     // 顺着 applyOpsVisual 一起落下去，免得两条路各刷一次、谁后刷谁说了算
+     applyOpsVisual();
+ }
+ // 顶层 function 声明会挂到 window 上，控制台里 updateScene(31, 60) 就能调。
+ // node 不传 = 当成当前显示那个宿舍的读数（控制台手调的用法）
+ function updateScene(temp, hum, node) {
+     // 判断「这个键认不认得」必须用 hasOwnProperty，不能用 envByNode[node] 的真假 ——
+     // 它初始就是 null，一个 falsy 就会掉进 shownNode 那条分支：
+     // dorm-c 的报文被当成 dorm-a 的读数写进去，画面当场跟着变色，
+     // 而正确行为是「先记着，等切过去再显示」
+     const known = node && Object.prototype.hasOwnProperty.call(envByNode, node);
+     const target = known ? node : shownNode;
+     envByNode[target] = envOf(temp, hum);
+     lastEnvOf[target] = { temp: temp, hum: hum };
+     // 只有正被看着的那个宿舍需要立刻反映到画面上；别的宿舍先记着，
+     // 等切过去的时候由 setTrendNode 一次性补上
+     if (target === shownNode) applyEnv(target);
+ }
+ // 换绑当前宿舍：opsState / opsMode 指向它的那一份，画面按它的状态重刷一遍。
+ // 少了这一步，切档位只是换了个标题，房间还是上一个宿舍的样子
+ function bindNode(node) {
+     if (!opsByNode[node]) return;
+     shownNode = node;
+     opsState = opsByNode[node];
+     opsMode = opsState.mode;
+     applyEnv(node);
+     applyOpsVisual();
+ }
+ // 房间的四个面 + 三份材质。材质也挂出来：模式换色是靠改这三份材质的 color，
+// 测试要能直接读到「房间现在是什么颜色」，而不是靠截图像素去猜
+window.room = {floor, backWall, leftWall, rightWall, floorMat, wallMat, ceilingMat};
+ // ===================== 鼠标拖拽旋转、滚轮缩放 =====================
+ let isDrag = false;
+ let prevMouseX = 0, prevMouseY = 0;
+ let theta = 0;
+ let phi = Math.PI / 4;
+ let radius = 8;
+ document.addEventListener('mousedown', e=>{
+     isDrag = true;
+     prevMouseX = e.clientX;
+     prevMouseY = e.clientY;
+ });
+ document.addEventListener('mouseup', ()=>{
+     isDrag = false;
+ });
+ document.addEventListener('mousemove', e=>{
+     if(!isDrag) return;
+     const dx = e.clientX - prevMouseX;
+     const dy = e.clientY - prevMouseY;
+     prevMouseX = e.clientX;
+     prevMouseY = e.clientY;
+     theta += dx * 0.005;
+     phi = Math.max(0.12, Math.min(Math.PI/2, phi + dy * 0.005));
+ });
+ document.addEventListener('wheel', e=>{
+     radius = Math.max(3, Math.min(16, radius + e.deltaY * 0.005));
+ });
+ function animate() {
+     requestAnimationFrame(animate);
+     const x = radius * Math.sin(phi) * Math.sin(theta);
+     const z = radius * Math.sin(phi) * Math.cos(theta);
+     const y = radius * Math.cos(phi);
+     camera.position.set(x, y + 1, z);
+     camera.lookAt(0, 1, 0);
+     //设备动画：只在该状态为真时才动，其余时间保持静止
+     //A2 的人工操作优先于环境驱动：opsState 里非 null 的项听人的，null 的听温湿度
+     //（null 这条兜底是必需的 —— 测试里直接置 sceneState.fanSpinning = true 让扇叶转，
+     //  那种情况下 opsState.fan 一直是 null，不能被这里屏蔽掉）
+     // 颜色和动作共用这一份判断（applyDeviceColors 读的是同一个函数），
+     // 扇叶在转就是红的、停了才按温度取色，两边不会再对不上
+     const working = deviceWorking();
+     if (working.fan) ceilingFan.userData.blades.rotation.y += 0.13;
+     //窗户：朝目标角每帧插值收敛。目标是绝对值，不存在「中途切回静止僵在半路」的问题 ——
+     //那是除湿器那种增量式正弦动画才有的坑（所以那边要立刻 snap 复位，这边不用）
+     const winTarget = (opsState.vent === true) ? WINDOW_OPEN_ANGLE : 0;
+     const winCur = windowObj.rotation.y;
+     if (Math.abs(winTarget - winCur) < 0.001) windowObj.rotation.y = winTarget;
+     else windowObj.rotation.y = winCur + (winTarget - winCur) * 0.12;
+     //除湿机：和风扇同一条规则 —— 人开过就听人的（opsState 非 null），没开过听环境的湿度判断。
+     //「工作中」和「停止」靠机身缩放表达：工作 = 明显放大到 1.15 并小幅呼吸，
+     //停止 = 缩回原尺寸。人开的那档基准特意比环境自动触发的大，
+     //这样「我在 dashboard 上点了除湿机」在 3D 里是看得出来的，而不是和自动呼吸混成一样
+     const dehumOn = working.dehum;
+     if (dehumOn) {
+         //系数 0.0035 → 周期 2π/3.5 ≈ 1.8 秒一次呼吸；幅度 ±5%
+         const base = (opsState.dehumidifier === null) ? 1 : 1.15;
+         const k = base + Math.sin(performance.now() * 0.0035) * 0.05;
+         dehumidifier.userData.body.scale.set(k, k, k);
+     } else {
+         //停的时候必须每帧显式写回 1：正弦是增量式的，少写这一笔，
+         //机器会僵在上一帧的放大尺寸上，「关了」看起来和「还开着」一样大
+         dehumidifier.userData.body.scale.set(1, 1, 1);
+     }
+     renderer.render(scene, camera);
+ }
+ animate();
+ window.addEventListener('resize', ()=>{
+     camera.aspect = window.innerWidth / window.innerHeight;
+     camera.updateProjectionMatrix();
+     renderer.setSize(window.innerWidth, window.innerHeight);
+ });
+// ===================== 8. MQTT 订阅：broker 推来的温湿度直接驱动场景 =====================
+// 地址必须是 WebSocket：网页说不了裸 TCP MQTT，mqtt://127.0.0.1:1884 那条是给 MQTTX、
+// mosquitto_pub 这类原生客户端走的，浏览器只能连 mosquitto 的 websockets 监听。
+// 连不上先查 mosquitto 配置里有没有 listener 9001 + protocol websockets
+const MQTT_URL = 'ws://127.0.0.1:9001';
+// 用 + 通配符一次订阅三个宿舍：dormmate/dorm-a/env、dormmate/dorm-b/env、dormmate/dorm-c/env
+// 通配符独占一层，"dormmate/+/env" 不会匹配到 dormmate/dorm-a/bed/env 这种更深层的主题
+const MQTT_TOPIC = 'dormmate/+/env';
+// A2 处置动作走另一条主题：dashboard 点按钮 → 发布到这里 → 3d 收到后驱动设备。
+// 和温湿度分开是有意的：温湿度是「环境事实」，处置是「人的动作」，混在一个主题里
+// 3d 就没法区分「该听环境的」还是「该听人的」
+const OPS_TOPIC = 'dormmate/+/ops';
+
+// 缺 mqtt.js 时只报错、不抛异常。3D 场景本身不依赖 broker：
+// CDN 被拦或断网时页面照常能转能看，左上角三个测试按钮也照常能用
+if (typeof mqtt === 'undefined') {
+    console.error('[MQTT] mqtt.js 未加载成功，主源和三个备用 CDN 都没拉到。' +
+                  '3D 场景仍可交互，但收不到 broker 数据，请检查网络或代理后刷新页面');
+} else {
+    console.log('[MQTT] 准备连接 ' + MQTT_URL + ' ，订阅主题 ' + MQTT_TOPIC);
+    const client = mqtt.connect(MQTT_URL, {
+        clientId: 'dormmate-3d-' + Math.random().toString(16).slice(2, 8),
+        reconnectPeriod: 2000,   //断线后每 2 秒重试一次
+        connectTimeout: 3000
+    });
+    window.mqttClient = client;  //挂到 window 上，控制台敲 mqttClient.connected 就能看当前状态
+
+    client.on('connect', () => {
+        console.log('[MQTT] 已连接 ' + MQTT_URL);
+        //MQTT 是发布/订阅模型，不显式订阅 broker 一条消息都不会推过来
+        client.subscribe(MQTT_TOPIC, { qos: 0 }, (err, granted) => {
+            if (err) {
+                console.error('[MQTT] 订阅失败：' + err.message);
+                return;
+            }
+            console.log('[MQTT] 已订阅 ' + granted.map(g => g.topic + '(qos' + g.qos + ')').join(', '));
+        });
+        // A2：同时订阅处置主题 —— dashboard 上的按钮按下后，这里要跟着动。
+        // 成功不打日志（原有那行「已订阅 …」是 env 主题的，多打一行会把它挤掉）；
+        // 失败必须报出来，否则「点了按钮 3d 不动」只能靠猜
+        client.subscribe(OPS_TOPIC, { qos: 0 }, err => {
+            if (err) console.warn('[MQTT] 处置主题订阅失败：' + err.message);
+        });
+    });
+
+    client.on('message', (topic, payload) => {
+        const raw = payload.toString();
+        console.log('[MQTT] 收到报文 ' + topic + ' → ' + raw);
+        // 处置报文走单独一条路：它不驱动温湿度视觉，只改设备状态
+        if (/^dormmate\/[^/]+\/ops$/.test(topic)) {
+            handleOpsMessage(topic, payload);
+            return;
+        }
+        let data;
+        try {
+            data = JSON.parse(raw);
+        } catch (e) {
+            //残缺 JSON 本身就是一条要能测出来的用例（README 故障模拟②）：
+            //这里只报错并丢弃本次报文，页面保持上一帧不动，不会刷成空白
+            console.error('[MQTT] JSON 解析失败，本次报文已丢弃：' + e.message);
+            return;
+        }
+        //JSON.parse('null') / JSON.parse('123') 都合法，但前者取 .temp 会直接抛 TypeError
+        if (!data || typeof data !== 'object') {
+            console.error('[MQTT] 报文不是 JSON 对象，本次已丢弃：' + raw);
+            return;
+        }
+        //字段名跟随 dashboard 的约定（temperature / humidity）：两边订阅同一个主题，
+        //读同一份报文，MQTTX 那边不用为了两个页面发两套格式。
+        //用 parseFloat 而不是 Number：Number(null) 和 Number('') 都得到 0，
+        //会让「字段缺失」伪装成 0℃ 这种看起来合法的读数混进去
+        const temp = parseFloat(data.temperature);
+        const hum  = parseFloat(data.humidity);
+        if (!Number.isFinite(temp) || !Number.isFinite(hum)) {
+            //非数字绝不能放进去：NaN 会顺着 scale 传进渲染循环，除湿器会当场从画面上消失
+            console.error('[MQTT] temperature/humidity 不是有效数字，本次报文已丢弃。收到字段：[' +
+                          Object.keys(data).join(', ') + '] temperature=' + data.temperature +
+                          ' humidity=' + data.humidity);
+            return;
+        }
+        console.log('[MQTT] 驱动场景 temperature=' + temp + ' humidity=' + hum);
+        // 节点名从主题里取 —— 报文里不一定带 nodeId（dashboard 那套发布端就不带）。
+        // 必须赶在 updateScene 之前解析出来：这一帧读数是哪个宿舍的，就得记到哪个宿舍名下，
+        // 记错了「切到 B 看到的是 A 的温度」比不显示还糟
+        const nodeMatch = /^dormmate\/([^/]+)\/env$/.exec(topic);
+        const node = (nodeMatch && nodeMatch[1]) || data.nodeId;
+        // 认不认得这个宿舍，问本页自己的 NODE3，不要问 A1 ——
+        // A1 是外链脚本，万一没加载成功，整页的温湿度就该跟着一起失灵
+        const known = NODE3.indexOf(node) >= 0;
+        // 复用已有逻辑，吊扇/除湿器的阈值规则一处都没改；
+        // 不认识的节点当作「当前显示那个宿舍」的读数，至少让画面有个反应
+        updateScene(temp, hum, known ? node : null);
+
+        if (known) {
+            if (A1) {
+                // 异常类型交给共用的判定内核算：和 dashboard 同一套阈值、同一份文案。
+                // 状态用本地阈值重算，不采信报文里的 status 字段，和 dashboard 一个口径
+                A1.feed(a1Tracker, node, A1.kindOf(temp, hum), Date.now());
+            }
+            // 横幅和曲线不依赖 A1（A1 只是给横幅提供结论）：外链脚本没加载成功时，
+            // 温度该显示的还得显示
+            renderBanner();
+            pushTrend(node, trendLabel(data), temp, hum);
+            // 「自动」档：房间和图都跟着最新到达的报文走，谁发数据就显示谁；
+            // 死盯着另一个宿舍不换，就会出现「明明在发数据、图上一个点都不出」的局面。
+            // 走 setTrendNode 而不是直接改 trendNode —— 换宿舍得把设备状态一起换绑
+            if (trendAuto) setTrendNode(node);
+        }
+        save3dState();
+    });
+
+    client.on('reconnect', () => console.warn('[MQTT] 重连中…'));
+    client.on('close',     () => console.warn('[MQTT] 连接已断开'));
+    client.on('offline',   () => console.warn('[MQTT] 已离线，等待重连…'));
+    client.on('error',     err => console.error('[MQTT] 连接错误：' + err.message));
+}
+// ===================== 8.5 A1 横幅 + A2 处置同步 =====================
+// A1 判定内核（a1/priority.js）和 dashboard 共用同一份，喂的又是同一批报文，
+// 所以两个页面上的「最值得关注」必然一致 —— 各写一份的话迟早会分叉
+const A1 = window.DormMateA1;
+const a1Tracker = A1 ? A1.createTracker() : {};
+// 每个宿舍的处理状态章。3d 这边只是显示：状态的权威在 dashboard，
+// 它发 action 就是「处理中」，发 verdict 就是「已恢复 / 仍需关注」
+const opsChip = {};
+let bannerNode = null;   // 横幅上当前显示的宿舍，点击跳转要用
+// 横幅第二行「用户操作」的内容：最近一次处置动作（任何宿舍的都算，不限 A1 挑中的那个）。
+// 存下来是为了刷新/跳转回来还能看见刚才做了什么
+let lastOp = null;
+// 最后一帧环境读数按宿舍各记一份（见上面 lastEnvOf），恢复历史时把三个宿舍
+// 都灌回去，切到哪个都不至于回到 25℃/60% 的初始配色
+const MODE_NAME = { study:'学习模式', sleep:'睡眠模式', away:'离寝模式' };
+
+// 把一条 action 报文说成人话：设备开关逐个列，模式单独接在后面。
+// 只列报文里真的带了的字段 —— dashboard 手动开关设备时 mode 是 null，
+// 硬编一句「保持学习模式」会凭空造出用户没做过的操作
+function describeAction(msg, d) {
+    const parts = [];
+    if (d.fan === true) parts.push('风扇已开启');
+    else if (d.fan === false) parts.push('风扇已关闭');
+    if (d.dehumidifier === true) parts.push('除湿机已开启');
+    else if (d.dehumidifier === false) parts.push('除湿机已关闭');
+    if (d.vent === true) parts.push('窗户已推开');
+    else if (d.vent === false) parts.push('窗户已关上');
+    if (d.light === true) parts.push('灯已开');
+    else if (d.light === false) parts.push('灯已关');
+    if (MODE_NAME[msg.mode]) parts.push('切换到' + MODE_NAME[msg.mode]);
+    if (msg.op && !parts.length) parts.push(String(msg.op));
+    return parts.length ? parts.join('、') : '已下发处置指令';
+}
+
+function renderOps() {
+    const el = document.getElementById('a1OpsText');
+    if (!el) return;
+    if (!lastOp) {
+        el.textContent = '用户操作：暂无';
+        el.classList.add('is-empty');
+        return;
+    }
+    const when = lastOp.ts ? new Date(lastOp.ts).toLocaleTimeString() : '';
+    el.textContent = '用户操作：' + (lastOp.node ? lastOp.node + ' ' : '') + lastOp.text + (when ? ' · ' + when : '');
+    el.classList.remove('is-empty');
+}
+
+// 房间配色（需求：学习=暖白、睡眠=暗蓝变暗、离寝=深灰）。
+// 全场景是 MeshBasicMaterial，不参加光照计算 —— 「变暗」没法靠调光实现，
+// 只能把墙/地板/天花板换成深色。没模式时回到原本的暖色
+const ROOM_BASE = { wall:0xf4ead9, floor:0xd9c8a6, ceiling:0xe6d9c0 };
+const ROOM_MODE_COLORS = {
+    study: { wall:0xfff7e6, floor:0xe8d9b8, ceiling:0xf5e8cf },  //暖白：比原色再亮一点
+    sleep: { wall:0x2a3550, floor:0x1e2735, ceiling:0x232e42 },  //暗蓝：整间暗下来
+    away:  { wall:0x3d3d3d, floor:0x333333, ceiling:0x383838 }   //深灰
+};
+// 当前生效的模式。不能塞进 sceneState（它的键名被测试逐字锁着），单独放一个变量
+let opsMode = null;
+
+function applyRoomMode() {
+    const c = ROOM_MODE_COLORS[opsMode] || ROOM_BASE;
+    wallMat.color.setHex(c.wall);
+    floorMat.color.setHex(c.floor);
+    ceilingMat.color.setHex(c.ceiling);
+}
+
+// 设备此刻在不在工作。人开过就听人的（opsState 非 null），没开过听环境的。
+// 颜色和动作都读这一个判断 —— 两边分开算的话，画面上会出现
+// 「扇叶在转、颜色却是绿的」「除湿机在放大呼吸、颜色却是粉的」这种自相矛盾
+function deviceWorking() {
+    return {
+        fan:   (opsState.fan === null) ? sceneState.fanSpinning : opsState.fan,
+        dehum: (opsState.dehumidifier === null) ? sceneState.breathing : opsState.dehumidifier
+    };
+}
+
+// 吊扇和除湿机的颜色跟着「在不在工作」走，和 animate 里那两个动作读的是同一份判断。
+// 人在 dashboard 上点了开，3D 里除了动起来还得变颜色 —— 只动不变色的话，
+// 除湿机在放大、机身却还是待机的粉色，等于这次操作在画面上没有反馈。
+// 吊扇不转的时候颜色仍然按温度取（<18 黄 / >=30 红 / 其余绿）：
+// 房间冷不冷这件事，不该因为「我手动把风扇关了」就从画面上消失
+function applyDeviceColors() {
+    const e = envByNode[shownNode] || envOf(25, 60);
+    const w = deviceWorking();
+    ceilingFan.userData.bladeMat.color.setHex(w.fan ? FAN_HOT_RED : e.bladeHex);
+    dehumidifier.userData.shellMat.color.setHex(w.dehum ? DEHUMID_WET_YELLOW : DEHUMID_PINK);
+    //从「工作」切回「停止」时立刻复位缩放，否则会僵在呼吸放大的那一帧上
+    if (!w.dehum) dehumidifier.userData.body.scale.set(1, 1, 1);
+}
+
+// 灯的颜色和房间配色在这里落地（Basic 材质不响应光照，只能靠换色表达亮/灭、明/暗）
+function applyOpsVisual() {
+    deskLamp.userData.lampMat.color.setHex(opsState.light === true ? LAMP_ON : LAMP_OFF);
+    applyRoomMode();
+    applyDeviceColors();
+}
+
+// 处置报文（dormmate/{node}/ops）。3d 是纯消费端：不判 src、不写事件日志 ——
+// 事件写入权唯一的持有者是 dashboard，两边都写必然重复记账
+function handleOpsMessage(topic, payload) {
+    let msg;
+    try {
+        msg = JSON.parse(payload.toString());
+    } catch (e) {
+        // 这里的错误一律用 warn 不用 error：3d 的测试套件断言「合法路径零 console.error」，
+        // 一条外部脏报文不该被算成页面的错
+        console.warn('[MQTT] 处置报文不是合法 JSON，已丢弃：' + payload.toString());
+        return;
+    }
+    if (!msg || typeof msg !== 'object') {
+        console.warn('[MQTT] 处置报文不是 JSON 对象，已丢弃：' + payload.toString());
+        return;
+    }
+    const node = msg.node;
+    // 报文属于哪个宿舍就改哪一份。改错份的话，操作 dorm-b 会让正看着的 dorm-a 跟着变 ——
+    // 用户切回 A 才发现它的设备状态被人动过
+    const target = opsByNode[node] || opsState;
+    if (msg.kind === 'verdict') {
+        // 结论只改状态章，房间一动不动：风扇照样转、除湿机照样放大、房间照样是原来那个颜色。
+        // 这里曾经把设备全部交还给环境驱动 —— 结果是判「已恢复」的一瞬间，
+        // 用户刚开的设备被系统自己关了，看起来像是他点错了。要不要关是他自己的事
+        opsChip[node] = (msg.result === 'recovered') ? '已恢复' : '仍需关注';
+        lastOp = { node: node, text: (msg.result === 'recovered') ? '已处置，数据恢复正常' : '仍需关注', ts: Date.now() };
+    } else if (msg.kind === 'action') {
+        const d = msg.devices || {};
+        if (typeof d.fan === 'boolean') target.fan = d.fan;
+        // 通风 = 推开窗户，同一个开关的两种说法（dashboard 已无此按钮，外部指令仍可驱动）
+        if (typeof d.vent === 'boolean') target.vent = d.vent;
+        if (typeof d.dehumidifier === 'boolean') target.dehumidifier = d.dehumidifier;
+        if (typeof d.light === 'boolean') target.light = d.light;
+        // 模式：手动开关设备之后 dashboard 会把 mode 置回 null，房间跟着回到原色
+        target.mode = msg.mode || null;
+        if (target === opsState) opsMode = target.mode;
+        // 状态章把「开着的设备」逐个列出来，风扇和除湿机都写清楚工作/停止
+        const on = [];
+        if (d.fan) on.push('风扇已开启');
+        if (typeof d.dehumidifier === 'boolean') {
+            on.push(d.dehumidifier ? '除湿机工作中' : '除湿机已停止');
+        }
+        opsChip[node] = '处理中' + (on.length ? '｜' + on.join('、') : '');
+        // 独立记一份「最近一次处理动作」给横幅第二行用。
+        // 不能复用上面的 opsChip：那份是按宿舍存的，横幅只显示 A1 挑出来的那个宿舍，
+        // 操作 dorm-a 而横幅正在显示 dorm-b 时，操作内容就整条看不见了
+        lastOp = { node: node, text: describeAction(msg, d), ts: Date.now() };
+    } else {
+        console.warn('[MQTT] 处置报文的 kind 无法识别，已丢弃：' + String(msg.kind));
+        return;
+    }
+    applyOpsVisual();
+    renderBanner();
+    renderOps();
+    save3dState();
+    console.log('[MQTT] 处置同步 ' + node + ' kind=' + msg.kind + ' 设备=' + JSON.stringify(msg.devices || {}));
+}
+
+// A1 横幅：显示当前最值得关注的宿舍 + 它的处理状态；没有异常就退成灰态。
+// 文案写进 #a1BannerText（内层那一行），绝不能写外层 #a1Banner3d 的 textContent ——
+// 那会把同在框里的「用户操作」那一行一起抹掉
+function renderBanner() {
+    const el = document.getElementById('a1Banner3d');
+    const line = document.getElementById('a1BannerText');
+    if (!el || !line) return;
+    const result = A1 ? A1.pick(a1Tracker, Date.now()) : null;
+    if (!result || !result.node) {
+        line.textContent = '当前无异常';
+        el.classList.add('is-idle');
+        bannerNode = null;
+        return;
+    }
+    bannerNode = result.node;
+    let text = '最值得关注：' + A1.describe(result).text;
+    if (opsChip[result.node]) text += '｜' + opsChip[result.node];
+    line.textContent = text;
+    el.classList.remove('is-idle');
+}
+
+const bannerEl = document.getElementById('a1Banner3d');
+if (bannerEl) {
+    // 拦下 mousedown：不拦的话点横幅会冒泡到 document，顺手把镜头拖走
+    bannerEl.addEventListener('mousedown', e => e.stopPropagation());
+    // 点一下 = 去 dashboard 看这个宿舍的详情。深链 ?node= 由那边的 applyQueryNode 接住
+    bannerEl.addEventListener('click', () => {
+        if (!bannerNode) return;
+        location.href = '../dashboard/index.html?node=' + encodeURIComponent(bannerNode);
+    });
+}
+
+// ===================== 9. 顶部发布面板：真实 MQTT 发送 =====================
+// 判定规则与 dashboard 的 computeStatus、web/script.js、analysis.py 三处保持一致，
+// 同一份报文在哪个页面算出来的 status 都一样：
+// 温度 <18 偏冷 / >=30 偏热；湿度 >=75 偏湿；两项都中就用 + 连起来，都没中才是「正常」
+function computeStatus(temp, hum) {
+    const parts = [];
+    if (temp < 18) parts.push('偏冷');
+    else if (temp >= 30) parts.push('偏热');
+    if (hum >= 75) parts.push('偏湿');
+    return parts.length ? parts.join('+') : '正常';
+}
+
+const pubPanel = document.getElementById('pubPanel');
+const pubNode  = document.getElementById('pubNode');
+const pubTemp  = document.getElementById('pubTemp');
+const pubHum   = document.getElementById('pubHum');
+const pubSend  = document.getElementById('pubSend');
+const pubTip   = document.getElementById('pubTip');
+
+function setPubTip(text, isError) {
+    pubTip.textContent = text;
+    pubTip.classList.toggle('is-error', !!isError);
+}
+
+// 同样拦下 mousedown：不拦的话点面板会冒泡到 document，触发画布的拖拽旋转 ——
+// 在输入框里划一下选个文字，镜头就跟着转走了
+pubPanel.addEventListener('mousedown', e => e.stopPropagation());
+
+pubSend.addEventListener('click', () => {
+    // 客户端可能压根不存在（mqtt.js 没拉到）或还没连上 broker（错误分支见第 8 节）。
+    // 这两种情况下 publish 不会报错，只会把消息静默丢进离线队列，页面上一点反应都没有，
+    // 所以先明确挡一道，别让人以为是按钮坏了
+    if (typeof mqtt === 'undefined' || !window.mqttClient) {
+        setPubTip('⚠️ MQTT 客户端不可用，看控制台里 [MQTT] 开头的报错', true);
+        return;
+    }
+    if (!window.mqttClient.connected) {
+        setPubTip('⚠️ 还没连上 broker，等连上再发', true);
+        return;
+    }
+    const nodeId = pubNode.value;
+    // 用 parseFloat 而不是 input.valueAsNumber：空输入框时两者都是 NaN，
+    // 但 parseFloat 对 "25 ℃" 这种带杂字符的输入更宽容，不会直接判空
+    const temperature = parseFloat(pubTemp.value);
+    const humidity    = parseFloat(pubHum.value);
+    if (!Number.isFinite(temperature) || !Number.isFinite(humidity)) {
+        setPubTip('⚠️ 温度和湿度都要填数字', true);
+        return;
+    }
+    // 量程守卫，和 web/script.js、小程序、analysis.py、app.py 用同一组边界：
+    // 温度 -20~60 ℃，湿度 0~100 %。超范围的读数不是「环境极端」而是手滑或传感器坏了，
+    // 发出去会写进 broker，3D 场景和 dashboard 都会照着它把房间点成红的 —— 所以直接拦住不发。
+    // 注意 min/max 属性只是浏览器的软提示，手动输入的越界值照样能到这儿，真正的拦截在这里。
+    if (temperature < -20 || temperature > 60) {
+        setPubTip('温湿度超出有效范围，请检查输入（温度 -20 ~ 60 ℃，当前 ' + temperature + ' ℃）', true);
+        return;
+    }
+    if (humidity < 0 || humidity > 100) {
+        setPubTip('温湿度超出有效范围，请检查输入（湿度 0 ~ 100 %，当前 ' + humidity + ' %）', true);
+        return;
+    }
+    const status  = computeStatus(temperature, humidity);
+    const topic   = 'dormmate/' + nodeId + '/env';
+    const payload = JSON.stringify({ nodeId: nodeId, temperature: temperature, humidity: humidity, status: status });
+
+    window.mqttClient.publish(topic, payload, { qos: 0 }, err => {
+        if (err) {
+            console.error('[发布] 失败 ' + topic + '：' + err.message);
+            setPubTip('⚠️ 发布失败：' + err.message, true);
+            return;
+        }
+        // 这个回调只代表消息交给了客户端，qos0 没有 broker 回执，所以只说「已发出」。
+        // 真正落地的证据是第 8 节那个 message 回调又收到了自己发的这条
+        console.log('[发布] 已发出 ' + topic + ' → ' + payload);
+        setPubTip('已发出 ' + topic + '  ' + temperature + '℃ / ' + humidity + '% → ' + status);
+    });
+});
+
+// ===================== 10. 趋势图：当前宿舍的温湿度曲线 =====================
+// dashboard 的【查看DormX】和告警横幅都跳到本页并带上 ?node=X ——
+// 需求要的「这个宿舍的趋势图 + 3D 房间」在同一个页面里一次给全
+const TREND_MAX = 60;                 // 每个宿舍最多留 60 个点（实时流式数据，不做无限增长）
+const NODE_NAME = {'dorm-a':'DormA', 'dorm-b':'DormB', 'dorm-c':'DormC'};
+const trendBuf = {'dorm-a': [], 'dorm-b': [], 'dorm-c': []};
+let trendNode = 'dorm-a';             // 面板当前显示哪个宿舍
+// true = 「自动」档，图跟着最新到达的报文走；false = 用户点了某个宿舍，钉住不动
+let trendAuto = true;
+let trendChart = null;
+
+// 横轴标签：优先用报文自带的时间（那才是采集时刻），没有就退回本机当前时刻。
+// 和 dashboard 不同，这里不按时间戳排序插点 —— 3D 页只订阅实时流，
+// 点位就是到达顺序，多一套排序逻辑只会多一处出错的地方
+function trendLabel(data) {
+    const t = data.time;
+    if (typeof t === 'number' && isFinite(t)) {
+        return new Date(t >= 1e11 ? t : t * 1000).toLocaleTimeString();
+    }
+    if (typeof t === 'string' && t.trim()) return t.trim();
+    return new Date().toLocaleTimeString();
+}
+
+function buildTrendChart() {
+    const cv = document.getElementById('trendCanvas');
+    if (!cv || typeof Chart === 'undefined') return null;
+    try {
+        return new Chart(cv.getContext('2d'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    { label:'温度 ℃', data:[], borderColor:'#ffb46b', backgroundColor:'rgba(255,180,107,.18)',
+                      tension:.3, pointRadius:2, yAxisID:'y' },
+                    { label:'湿度 %', data:[], borderColor:'#6cc7ff', backgroundColor:'rgba(108,199,255,.18)',
+                      tension:.3, pointRadius:2, yAxisID:'y1' }
+                ]
+            },
+            options: {
+                responsive:true,
+                maintainAspectRatio:false,   //高度由 #trendWrap 定死，不然面板会随窗口忽高忽低
+                animation:false,             //实时流一帧一个新点，开动画只会让线一直追不上数据
+                plugins:{ legend:{ labels:{ color:'#ffe9c2', boxWidth:12 } } },
+                scales:{
+                    x:{ ticks:{ color:'#c9b79a', maxTicksLimit:5, autoSkip:true },
+                        grid:{ color:'rgba(255,233,194,.08)' } },
+                    //温湿度量纲差得远（℃ 与 %），各占一条纵轴，硬挤在一条轴上湿度会压扁温度
+                    y:{ position:'left', ticks:{ color:'#ffb46b' },
+                        grid:{ color:'rgba(255,233,194,.08)' } },
+                    y1:{ position:'right', ticks:{ color:'#6cc7ff' },
+                         grid:{ drawOnChartArea:false }, suggestedMin:0, suggestedMax:100 }
+                }
+            }
+        });
+    } catch (e) {
+        // 图表库没加载成功或初始化失败都只影响这一块，3D 场景照常
+        console.warn('[趋势图] 初始化失败：' + e.message);
+        return null;
+    }
+}
+
+function pushTrend(node, label, temp, hum) {
+    const buf = trendBuf[node];
+    if (!buf) return;
+    buf.push({ label: label, temp: temp, hum: hum });
+    while (buf.length > TREND_MAX) buf.shift();
+    if (node === trendNode) renderTrend();
+}
+
+function renderTrend() {
+    const empty = document.getElementById('trendEmpty');
+    const buf = trendBuf[trendNode] || [];
+    if (empty) empty.textContent = buf.length ? '' : '等待该宿舍的数据…';
+    if (!trendChart) return;
+    // 一律原地改（length = 0 再 push），不整个换数组 —— Chart.js 内部持有的是同一个数组引用，
+    // 换掉引用它可能还在看旧的
+    trendChart.data.labels.length = 0;
+    trendChart.data.labels.push.apply(trendChart.data.labels, buf.map(p => p.label));
+    trendChart.data.datasets.forEach(function(ds, i){
+        ds.data.length = 0;
+        ds.data.push.apply(ds.data, buf.map(function(p){ return i === 0 ? p.temp : p.hum }));
+    });
+    trendChart.update();
+}
+
+function setTrendNode(node) {
+    if (!trendBuf[node]) return;
+    trendNode = node;
+    // 换宿舍 = 换房间。设备开关、模式配色、吊扇除湿机听谁的，全部换成这个宿舍那一份 ——
+    // 只把标题和曲线换掉的话，切到 dorm-b 看到的还是 dorm-a 那台开着的除湿机
+    bindNode(node);
+    const title = document.getElementById('trendTitle');
+    if (title) title.textContent = (NODE_NAME[node] || node) + ' 实时趋势（温度 / 湿度）';
+    renderTrend();
+    renderTabs();
+}
+
+// 标签高亮跟着 trendNode / trendAuto 走。tab 上的 data-node="auto" 是「自动」档
+function renderTabs() {
+    const box = document.getElementById('trendTabs');
+    if (!box) return;
+    box.querySelectorAll('button').forEach(function (b) {
+        const target = b.dataset.node;
+        const on = (target === 'auto') ? trendAuto : (!trendAuto && target === trendNode);
+        b.classList.toggle('is-active', on);
+    });
+}
+
+// ?node=dorm-b 深链：白名单校验，别的一律不认。
+// 和 dashboard 的 applyQueryNode 一个路子 —— 参数只用来选已有的三个宿舍，
+// 不会拿它去拼任何东西
+function applyQueryNode() {
+    let q = null;
+    try {
+        q = new URLSearchParams(location.search).get('node');
+    } catch (e) { /* 极老的浏览器没有 URLSearchParams，退化成默认宿舍 */ }
+    // 带着 ?node= 进来是「我就是要看这个宿舍」的明确意图：钉住它，
+    // 不让后面别的宿舍的报文把图抢走
+    if (q && trendBuf[q]) { trendAuto = false; setTrendNode(q); }
+}
+
+// dashboard 存的那份账。两个页面各写各的 localStorage，互相看不见，中间的同步
+// 全靠 MQTT 广播 —— 而广播是不保留的：dashboard 上拨开关的那一刻这个页面没开着
+// （或者刚从 dashboard 跳过来、还没订阅上），那条 ops 就永远错过了。错过之后 3d
+// 就停在自己那份旧存档上：dashboard 明明写着「关」，房间里那台还在转。
+// 现在 3d 起来时读一眼 dashboard 刚存的那份，开关以它为准
+const DASH_KEY_3D = 'dormmate.dashboard.v1';
+function adoptDashboardState() {
+    let raw = null;
+    try { raw = localStorage.getItem(DASH_KEY_3D); } catch (e) { return; }
+    if (!raw) return;                  // 从没打开过 dashboard：按 3d 自己的存档来
+    let s = null;
+    try { s = JSON.parse(raw); } catch (e) { return; }
+    if (!s || typeof s !== 'object' || !s.dev || typeof s.dev !== 'object') return;
+    NODE3.forEach(function (node) {
+        const d = s.dev[node];
+        if (!d || typeof d !== 'object') return;
+        const dst = opsByNode[node];
+        // 风扇转不转、灯亮不亮、除湿机开不开，一律照 dashboard 那份来。
+        // 落下去的就是 true/false，不再留「人没碰过」那一档 ——
+        // 3d 不再拿温湿度去猜某台设备该不该自己动，开关只认 dashboard
+        dst.fan = !!d.fan;
+        dst.dehumidifier = !!d.dehumidifier;
+        dst.light = !!d.light;
+        dst.mode = MODE_NAME[d.mode] ? d.mode : null;
+    });
+}
+
+// ===================== 10.5 持久化：刷新 / 离开再回来，页面不回到原样 =====================
+// 用户要的是「3d 页 = 能回看的看板」：趋势曲线的历史、房间的模式配色、设备开关、
+// 最近一次处理动作、异常次数与计时，刷新或从 dashboard 再跳回来都还得在。
+// 和 dashboard「打开即清零」不矛盾 —— 那边是处置台（每次从零开始处置），这边是看板。
+// 两边各用各的 localStorage key，互不干扰
+const STORE_KEY_3D = 'dormmate.3d.v1';
+
+function save3dState() {
+    const payload = {
+        trend: { buf: trendBuf, node: trendNode, auto: trendAuto },
+        // 三个宿舍各自的设备状态与模式。opsByNode 是权威；下面那两个扁平字段
+        // 是给旧存档格式留的读法，新写的一律以 opsByNode 为准
+        opsByNode: opsByNode,
+        envByNode: lastEnvOf,
+        ops: { fan: opsState.fan, vent: opsState.vent, dehumidifier: opsState.dehumidifier,
+               light: opsState.light, mode: opsMode },
+        lastOp: lastOp,
+        lastEnv: lastEnvOf[shownNode],   // 旧字段，留给旧版本读；新版本读 envByNode
+        a1: a1Tracker
+    };
+    try {
+        localStorage.setItem(STORE_KEY_3D, JSON.stringify(payload));
+    } catch (e) {
+        // 无痕模式、存储配额满都会在这里抛。存不下只意味着下次回看不到历史，
+        // 实时功能一点不受影响，所以只提示、不打断
+        console.warn('[持久化] 历史存不下来（' + e.name + '），刷新后页面会回到初始状态');
+    }
+}
+
+// 读回来的东西一律当「不可信」逐项校验：localStorage 是用户和同源的其他页面都能改的地方，
+// 一条被改坏的记录不该让页面白屏，更不该把 NaN 灌进渲染循环（除湿器会当场消失）
+function restore3dState() {
+    let raw = null;
+    try {
+        raw = localStorage.getItem(STORE_KEY_3D);
+    } catch (e) {
+        console.warn('[持久化] 读不到历史（' + e.name + '）');
+        return;
+    }
+    if (!raw) return;
+    let s = null;
+    try {
+        s = JSON.parse(raw);
+    } catch (e) {
+        console.warn('[持久化] 存档不是合法 JSON，按首次打开处理');
+        return;
+    }
+    if (!s || typeof s !== 'object') return;
+
+    // 曲线：只认三个已知宿舍，每个点必须是 {label,temp,hum} 且温湿度为有限数字
+    if (s.trend && s.trend.buf && typeof s.trend.buf === 'object') {
+        Object.keys(trendBuf).forEach(function (n) {
+            const arr = s.trend.buf[n];
+            if (!Array.isArray(arr)) return;
+            trendBuf[n] = arr.filter(function (p) {
+                return p && Number.isFinite(p.temp) && Number.isFinite(p.hum);
+            }).slice(-TREND_MAX).map(function (p) {
+                return { label: String(p.label == null ? '' : p.label), temp: p.temp, hum: p.hum };
+            });
+        });
+    }
+    if (s.trend && typeof s.trend.auto === 'boolean') trendAuto = s.trend.auto;
+    if (s.trend && trendBuf[s.trend.node]) trendNode = s.trend.node;
+
+    // 设备与模式：只接受布尔和 null，别的一律退回 null（= 听环境的）
+    const boolOrNull = v => (typeof v === 'boolean' ? v : null);
+    // 读一份 ops 存档到某个宿舍名下。按键逐个校验，整份原样吃进去的话，
+    // 一条被改坏的 localStorage 就能把 NaN 或字符串灌进渲染循环
+    function readOps(node, o) {
+        if (!o || typeof o !== 'object') return;
+        const dst = opsByNode[node];
+        dst.fan = boolOrNull(o.fan);
+        dst.vent = boolOrNull(o.vent);
+        dst.dehumidifier = boolOrNull(o.dehumidifier);
+        dst.light = boolOrNull(o.light);
+        dst.mode = MODE_NAME[o.mode] ? o.mode : null;
+    }
+    if (s.opsByNode && typeof s.opsByNode === 'object') {
+        NODE3.forEach(function (n) { readOps(n, s.opsByNode[n]); });
+    } else if (s.ops && typeof s.ops === 'object') {
+        // 旧存档只存了一份，无从知道它是谁的 —— 按当前显示的那个宿舍读，
+        // 至少不会把它当成三个宿舍都有
+        readOps(trendNode, s.ops);
+    }
+    // 环境读数：三个宿舍各灌各的。少了这一步，房间会以 25℃/60% 的初始配色回来，
+    // 「3d 图变成原样了」说的就是这种。落到画面上交给启动末尾的 setTrendNode
+    // （它会 bindNode 换绑到 trendNode 那个宿舍）
+    function readEnv(node, e) {
+        if (!e || !Number.isFinite(e.temp) || !Number.isFinite(e.hum)) return;
+        lastEnvOf[node] = { temp: e.temp, hum: e.hum };
+        envByNode[node] = envOf(e.temp, e.hum);
+    }
+    if (s.envByNode && typeof s.envByNode === 'object') {
+        NODE3.forEach(function (n) { readEnv(n, s.envByNode[n]); });
+    } else if (s.lastEnv) {
+        readEnv(trendNode, s.lastEnv);
+    }
+
+    if (s.lastOp && typeof s.lastOp === 'object' && typeof s.lastOp.text === 'string') {
+        lastOp = { node: String(s.lastOp.node || ''), text: s.lastOp.text,
+                   ts: Number.isFinite(s.lastOp.ts) ? s.lastOp.ts : null };
+    }
+
+    // 异常计数与计时：只认三个宿舍，每条按 {abnormalSince,count,kind} 的形状重建
+    if (A1 && s.a1 && typeof s.a1 === 'object') {
+        Object.keys(a1Tracker).forEach(function (n) { delete a1Tracker[n]; });
+        A1.NODE_ORDER.forEach(function (n) {
+            const e = s.a1[n];
+            if (!e || typeof e !== 'object') return;
+            a1Tracker[n] = {
+                abnormalSince: Number.isFinite(e.abnormalSince) ? e.abnormalSince : null,
+                count: Number.isFinite(e.count) && e.count > 0 ? e.count : 0,
+                kind: (typeof e.kind === 'string' && A1.ALERT_TEXT[e.kind]) ? e.kind : null
+            };
+        });
+    }
+
+    console.log('[持久化] 已恢复历史：趋势 ' +
+        Object.keys(trendBuf).map(n => n + '=' + trendBuf[n].length).join(' ') +
+        '，显示=' + shownNode + '，设备=' + JSON.stringify(opsByNode));
+}
+
+// 同样拦下 mousedown：在图上划一下不该把 3D 镜头也拖走
+const trendPanel = document.getElementById('trendPanel');
+if (trendPanel) trendPanel.addEventListener('mousedown', e => e.stopPropagation());
+
+// 三个宿舍标签：点一下 = 钉住这个宿舍看；点「自动」= 恢复跟随最新报文
+const trendTabs = document.getElementById('trendTabs');
+if (trendTabs) {
+    trendTabs.addEventListener('mousedown', e => e.stopPropagation());
+    trendTabs.querySelectorAll('button').forEach(function (b) {
+        b.addEventListener('click', function () {
+            if (b.dataset.node === 'auto') { trendAuto = true; setTrendNode(trendNode); }
+            else { trendAuto = false; setTrendNode(b.dataset.node); }
+            save3dState();
+        });
+    });
+}
+
+trendChart = buildTrendChart();
+if (typeof Chart === 'undefined') {
+    console.warn('[趋势图] chart.js 未加载成功（主源和三个备用 CDN 都没拉到），' +
+                 '趋势图画不出来，3D 场景与设备同步不受影响');
+}
+restore3dState();          //先回放历史，房间和曲线都按上次离开时的样子起来
+adoptDashboardState();     //开关状态以 dashboard 为准：那边刚拨过的压过 3d 自己的旧存档
+applyOpsVisual();          //房间配色、台灯按恢复出来的模式重刷一遍
+applyQueryNode();          //?node= 是更明确的意图，压过历史里记的那个节点
+setTrendNode(trendNode);
+renderTabs();
+renderOps();
+renderBanner();
+save3dState();             //把恢复后的状态再写一次：字段被校验丢弃时以页面实际状态为准
+
+ </script>
+ </body>
+ </html>

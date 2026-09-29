@@ -82,6 +82,8 @@
         </div>
         <ol class="history" id="history-list"></ol>
         <p class="history__empty" id="history-empty">暂无记录，每次成功分析会自动生成一条带时间的记录。</p>
+        <!-- 后端连不上、导出备份提示这类「不是错误但用户必须知道」的消息落在这里 -->
+        <p class="export__notice" id="export-notice" hidden></p>
       </section>
 
       <!-- 摄像头抓拍（M3 阶段1） -->
@@ -94,10 +96,19 @@
         <div class="camera__actions">
           <button class="camera__btn camera__btn--ghost" id="camera-preview-btn" type="button">开启预览</button>
           <button class="camera__btn camera__btn--primary" id="camera-snap-btn" type="button" disabled>抓拍快照</button>
+          <!-- 录像要先有流，所以初始是 disabled，预览成功后才放开 -->
+          <button class="camera__btn camera__btn--ghost" id="camera-record-btn" type="button" disabled>开始录像</button>
+          <!-- 放弃只在录像进行中可用：录到一半反悔了，直接丢掉，不写 CSV、不落盘 -->
+          <button class="camera__btn camera__btn--discard" id="camera-discard-btn" type="button" disabled>放弃录像</button>
+          <!-- 抓拍是两步：先定格，用户确认后才入历史。这两个按钮只在有待确认的快照时出现 -->
+          <button class="camera__btn camera__btn--primary" id="camera-keep-btn" type="button" hidden>保存快照</button>
+          <button class="camera__btn camera__btn--ghost" id="camera-drop-btn" type="button" hidden>放弃快照</button>
         </div>
 
+        <!-- 上下两个框固定都在：上面 video 是实时预览，下面 canvas 是定格位。
+             canvas 不设 hidden —— 页面一打开就是个空的定格框，抓拍后图就落在这里 -->
         <video class="camera__video" id="camera-video" autoplay muted playsinline></video>
-        <canvas class="camera__canvas" id="camera-canvas" hidden></canvas>
+        <canvas class="camera__canvas" id="camera-canvas"></canvas>
 
         <p class="camera__status" id="camera-status" role="status">尚未开启预览。摄像头需要 localhost 或 HTTPS 环境，file:// 无法调用。</p>
         <p class="camera__meta" id="camera-meta" hidden></p>
@@ -112,9 +123,11 @@
 
         <div class="voice__actions">
           <button class="voice__btn voice__btn--primary" id="voice-toggle-btn" type="button">开始语音监听</button>
+          <!-- 录音不依赖语音识别，所以它不受插件/网络影响，随时可用 -->
+          <button class="voice__btn" id="voice-record-btn" type="button">开始录音</button>
         </div>
 
-        <p class="voice__hint">支持语音指令：「朗读状态」「拍照」</p>
+        <p class="voice__hint">语音指令：「朗读状态」「拍照」「分析环境」「清空历史」「导出csv」「查看历史」「开始录音」「停止录音」</p>
 
         <div class="voice__panel">
           <p class="voice__transcript" id="voice-transcript" aria-live="polite">点击「开始语音监听」后，请说出指令…</p>

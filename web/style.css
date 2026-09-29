@@ -766,3 +766,72 @@ body {
   color: var(--hot);
   font-weight: 600;
 }
+
+/* ============================================================
+ * M7：媒体上传与历史内嵌回看
+ * 全部追加在文件末尾，不改动上面任何既有规则（.history__item 的
+ * flex-wrap 是同特异性覆盖，见下）。
+ * ============================================================ */
+
+/* 录像中 / 录音中：用偏热那支红色，和「正在监听」的视觉语言保持一致 */
+.camera__btn.is-recording,
+.voice__btn.is-recording {
+  border-color: var(--hot);
+  background: var(--hot-soft);
+  color: var(--hot);
+}
+
+/* 历史条目要能容纳换行下来的媒体盒，所以允许折行。
+   这是对上面 .history__item 的补充声明，不是改写 —— 不折行时布局和原来完全一样 */
+.history__item {
+  flex-wrap: wrap;
+}
+
+/* 媒体盒占满整行，落到「编号 + 数值 + 状态标签」那一行的下面 */
+.history__media-box {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.history__media--img {
+  max-width: 180px;
+  max-height: 140px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  object-fit: cover;
+  cursor: zoom-in;
+}
+
+.history__media--video {
+  width: 100%;
+  max-width: 320px;
+  max-height: 200px;
+  border-radius: var(--radius-sm);
+  background: #0b0e16;
+}
+
+.history__media--audio {
+  width: 100%;
+  max-width: 280px;
+  height: 36px;
+}
+
+/* 媒体文件加载不出来时的替代文字。比留一个点不动的破播放器有用：
+   至少能看出是「文件没找到」还是「后端没起来」 */
+.history__media-missing {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+/* 后端连不上、导出备份提示这类消息。不是错误，所以用静默色而不是红色 */
+.export__notice {
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}

@@ -14,6 +14,18 @@
 let isRunningCommand = false; // 指令冷却锁
 let mediaStream = null; // 保存摄像头流，用来判断摄像头是否开启
 
+/* 后端地址候选，按顺序试，第一个连上的用。
+   原来是写死的 http://192.168.131.200:5000 —— 那是台机器的局域网 IP，后来变了，
+   写死就等于静默失效（请求发出去没人接，页面上什么也看不出来）。
+   现在和 app.py 的启动方式对齐：本机跑用 localhost，手机访问时退回局域网地址。
+   window.DORMATE_API_HOSTS 是给自动化测试覆盖用的。 */
+var API_HOSTS = (typeof window !== 'undefined' && window.DORMATE_API_HOSTS)
+  ? window.DORMATE_API_HOSTS
+  : ['http://localhost:5000', 'http://192.168.171.200:5000'];
+
+/* 媒体类型 → CSV 列名，和后端 MEDIA_COLUMN 一致 */
+var MEDIA_FIELD = { photo: 'photo_name', video: 'video_name', audio: 'audio_name' };
+
 (function () {
   'use strict';
 
@@ -262,6 +274,73 @@ let mediaStream = null; // 保存摄像头流，用来判断摄像头是否开�
 
   /* ---------------- 渲染：历史记录 ---------------- */
 
+  /* 历史条目里的媒体回看：照片给缩略图、视频给播放器、录音给音频条。
+     地址指向后端的 /media/<文件名> —— CSV 里只有文件名，实体在 data/media。
+
+     这里刻意不再要求 apiBase 已就绪：原来写的是「连不上后端就整块不渲染」，
+     结果后端没起（或探测还没回来）时，历史里明明有文件名却什么控件都不出现，
+     看着就是「视频和录音丢了」。现在一律按候选地址渲染，加载失败再把控件
+     换成一行说明 —— 至少能看到是哪个文件、为什么没出来。
+     后端探测成功后 renderHistory 会重跑，地址自动换成真正连上的那个。 */
+  function buildMediaBox(record) {
+    if (!record.photoName && !record.videoName && !record.audioName) return null;
+
+    var base = apiBase || API_HOSTS[0];
+
+    var box = document.createElement('div');
+    box.className = 'history__media-box';
+
+    /* 文件在不在，只有真发一次请求才知道。加载不出来时把控件替换成说明文字：
+       留一个点不动的播放器，用户只会以为功能坏了 */
+    function replaceOnFail(el, name) {
+      el.addEventListener('error', function () {
+        var hint = document.createElement('p');
+        hint.className = 'history__media-missing';
+        hint.textContent = name + ' 加载失败。请确认后端已启动（python app.py），' +
+          '并且 data/media 里有这个文件。';
+        if (el.parentNode) el.parentNode.replaceChild(hint, el);
+      });
+    }
+
+    if (record.photoName) {
+      var img = document.createElement('img');
+      img.className = 'history__media--img';
+      img.loading = 'lazy';
+      img.alt = '抓拍照片 ' + record.timeText;
+      img.title = '点击查看原图';
+      img.src = mediaUrl(record.photoName, base);
+      /* CSS 里给了 cursor: zoom-in，那就得真能放大 —— 开新标签页看原图。
+         用 img.src 而不是重算一遍：地址里带着实际连上的 host，重算会丢 */
+      img.addEventListener('click', function () {
+        window.open(img.src, '_blank');
+      });
+      replaceOnFail(img, record.photoName);
+      box.appendChild(img);
+    }
+
+    if (record.videoName) {
+      var videoEl = document.createElement('video');
+      videoEl.className = 'history__media--video';
+      videoEl.controls = true;
+      videoEl.preload = 'metadata';
+      videoEl.src = mediaUrl(record.videoName, base);
+      replaceOnFail(videoEl, record.videoName);
+      box.appendChild(videoEl);
+    }
+
+    if (record.audioName) {
+      var audioEl = document.createElement('audio');
+      audioEl.className = 'history__media--audio';
+      audioEl.controls = true;
+      audioEl.preload = 'metadata';
+      audioEl.src = mediaUrl(record.audioName, base);
+      replaceOnFail(audioEl, record.audioName);
+      box.appendChild(audioEl);
+    }
+
+    return box;
+  }
+
   function renderHistory() {
     els.historyList.innerHTML = '';
 
@@ -295,17 +374,28 @@ let mediaStream = null; // 保存摄像头流，用来判断摄像头是否开�
       item.appendChild(index);
       item.appendChild(body);
       item.appendChild(summary);
+
+      var mediaBox = buildMediaBox(record);
+      if (mediaBox) item.appendChild(mediaBox);
+
       els.historyList.appendChild(item);
     });
 
     els.historyCount.textContent = records.length + ' 条';
     els.historyEmpty.hidden = records.length > 0;
     els.exportBtn.disabled = records.length === 0;
+
+    /* 渲染是 records 变化的唯一出口，存档挂在这里就够，
+       不用在每个改 records 的地方各写一遍（漏一个就丢一次数据） */
+    persist();
   }
 
   /* ---------------- 导出 CSV ---------------- */
 
-  var CSV_HEADERS = ['time', 'temperature', 'humidity', 'status'];
+  /* 7 列，与 data/dormmate.csv 的表头、app.py 的 CSV_HEADER、小程序导出一致。
+     后三列存的是文件名（不是二进制），实体都在后端 data/media 里 */
+  var CSV_HEADERS = ['time', 'temperature', 'humidity', 'status',
+                     'photo_name', 'video_name', 'audio_name'];
 
   function buildCsv() {
     var lines = [CSV_HEADERS.join(',')];
@@ -316,7 +406,10 @@ let mediaStream = null; // 保存摄像头流，用来判断摄像头是否开�
         record.timeText,
         formatNumber(record.temperature),
         formatNumber(record.humidity),
-        record.summary
+        record.summary,
+        record.photoName || '',
+        record.videoName || '',
+        record.audioName || ''
       ].join(','));
     });
 
@@ -339,6 +432,314 @@ let mediaStream = null; // 保存摄像头流，用来判断摄像头是否开�
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+
+    /* 用户很自然会以为导出的 CSV 就是全部数据 —— 媒体实体不在 CSV 里，
+       不提醒的话换台机器打开会发现照片视频全是坏的。
+       页面上留一行文字，另加一次 alert：导出是用户主动触发的动作，这里弹一次不烦人 */
+    var tips = 'CSV 已导出。完整保存图片、视频、音频，需要同步复制后端的 data/media 文件夹。';
+    showNotice(tips);
+    window.alert(tips);
+  }
+
+  /* ---------------- 后端同步 ---------------- */
+
+  /* 当前连上的后端地址；没连上时为 ''，媒体控件据此决定渲不渲染 */
+  var apiBase = '';
+
+  var noticeEl = document.getElementById('export-notice');
+
+  function showNotice(text) {
+    if (!noticeEl) return;
+    noticeEl.textContent = text;
+    noticeEl.hidden = false;
+  }
+
+  function hideNotice() {
+    if (noticeEl) noticeEl.hidden = true;
+  }
+
+  /* 不传 base 时用已探测到的后端地址；还没探测出来时退回第一个候选地址 ——
+     历史上写过 mediaUrl() 直接返回 apiBase+'/media/...'，apiBase 为空串时
+     会拼出一个相对路径 '/media/xxx'，指到静态服务器上，永远是 404 */
+  function mediaUrl(filename, base) {
+    return (base || apiBase || API_HOSTS[0]) + '/media/' + encodeURIComponent(filename);
+  }
+
+  /* 新纪录同步到后端 CSV。失败不会打断本地流程 —— 页面上这条记录已经出来了，
+     只是刷新之后会丢，所以用 notice 提示而不是弹错误框打断用户 */
+  function postRecordToBackend(record, hostIdx) {
+    hostIdx = hostIdx || 0;
+    if (hostIdx >= API_HOSTS.length) {
+      showNotice('记录已显示在页面上，但保存到后端失败：请确认后端已启动（python app.py）。');
+      return;
+    }
+
+    fetch(API_HOSTS[hostIdx] + '/api/addRecord', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        temperature: record.temperature,
+        humidity: record.humidity
+      })
+    }).then(function (res) {
+      if (res.ok) {
+        apiBase = API_HOSTS[hostIdx];
+        hideNotice();
+        /* 把本地时间换成服务端返回的那个。页面这条记的是浏览器时间，CSV 里那行记的是
+           服务端的 now，两边跨过整秒时就会差一秒 —— 刷新合并时同一次分析会被当成两条
+           并排显示。统一以服务端为准，本地和后端就精确对得上了 */
+        return res.json().then(function (json) {
+          if (json && json.time && record.timeText !== json.time) {
+            record.timeText = json.time;
+            renderHistory();
+          }
+        }).catch(function () { /* 响应不是 JSON 也不影响本地已经显示出来的记录 */ });
+      }
+      /* 4xx 是数据本身的问题，换台机器一样会被拒；只有 5xx 才值得换 host 重试 */
+      if (res.status >= 500) {
+        postRecordToBackend(record, hostIdx + 1);
+      } else {
+        showNotice('后端拒绝了这条记录（HTTP ' + res.status + '），它只存在于本页面。');
+      }
+    }).catch(function () {
+      postRecordToBackend(record, hostIdx + 1);
+    });
+  }
+
+  /* 后端行 → 页面记录。状态不直接采信 CSV 里那一列，本地按同一套阈值重算：
+     CSV 可能是手工改过的、也可能来自旧版本，页面上显示的始终是当下的判定规则 */
+  function mapRowToRecord(row) {
+    var temperature = Number(row.temperature);
+    var humidity = Number(row.humidity);
+    var tempState = judgeTemperature(temperature);
+    var humidityState = judgeHumidity(humidity);
+
+    return {
+      id: 0,
+      time: null,
+      timeText: row.time || '',
+      temperature: temperature,
+      humidity: humidity,
+      tempState: tempState,
+      humidityState: humidityState,
+      overall: overallState(tempState, humidityState),
+      headline: buildHeadline(tempState, humidityState),
+      suggestions: buildSuggestions(tempState, humidityState),
+      summary: buildSummary(tempState, humidityState),
+      photoName: row.photo_name || '',
+      videoName: row.video_name || '',
+      audioName: row.audio_name || ''
+    };
+  }
+
+  /* 后端启动时刻（页面据此过滤）。空串表示没取到，这时不过滤 */
+  var serverStartedAt = '';
+
+  /* ---------------- 本地存档 ----------------
+     页面上的记录只活在内存里，刷新、误关标签、Live Server 自动重载都会让它归零，
+     表现就是「刚分析完，状态与建议和历史数据全没了」。所以每渲染一次就顺手存一份，
+     下次打开先把它恢复出来 —— 不依赖后端是否在跑。
+     只存文件名索引，媒体二进制始终只在 data/media 里，不进浏览器存储。 */
+  var STORE_KEY = 'dormmate.web.v1';
+
+  /* 「清空」的清零点：这个时刻之前的记录不再上屏，刷新也不会回来。
+     后端没有删除接口、CSV 一个字都不动 —— 老数据仍然完整躺在文件里，
+     只是页面这边把它划到了线外。空串 = 从没清空过，全都算数。 */
+  var clearedBefore = '';
+
+  function persist() {
+    try {
+      window.localStorage.setItem(STORE_KEY, JSON.stringify({
+        temperature: els.temperature.value,
+        humidity: els.humidity.value,
+        clearedBefore: clearedBefore,
+        /* 存成后端行的形状（下划线列名），恢复时直接喂给 mapRowToRecord，
+           判定状态重新算一遍，不会把旧版本的结论一起冻在存档里 */
+        records: records.map(function (r) {
+          return {
+            time: r.timeText, temperature: r.temperature, humidity: r.humidity,
+            photo_name: r.photoName || '', video_name: r.videoName || '', audio_name: r.audioName || ''
+          };
+        })
+      }));
+    } catch (err) {
+      /* 无痕模式、存储配额满都会抛。存档是锦上添花，失败了也不该影响主流程 */
+    }
+  }
+
+  function restore() {
+    var raw;
+    try { raw = window.localStorage.getItem(STORE_KEY); } catch (err) { return; }
+    if (!raw) return;
+
+    var data;
+    try { data = JSON.parse(raw); } catch (err) { return; }
+    if (!data || typeof data !== 'object') return;
+
+    /* 输入框恢复成上次填的：用户要的就是「自动保留最后一次输入的温湿度」 */
+    if (typeof data.temperature === 'string') els.temperature.value = data.temperature;
+    if (typeof data.humidity === 'string') els.humidity.value = data.humidity;
+
+    /* 清零点比 records 更重要：清空那一刻本地列表是空的，光靠 records 恢复，
+       下次 loadBackendHistory 会把后端的老记录当成「本次运行的新记录」全捞回来 */
+    if (typeof data.clearedBefore === 'string') clearedBefore = data.clearedBefore;
+
+    if (Array.isArray(data.records) && data.records.length) {
+      records = data.records.slice(0, MAX_RECORDS).map(mapRowToRecord);
+      serial = records.length;
+      /* 状态与建议面板也一并恢复：只恢复历史不恢复面板的话，
+         刷新后会出现「列表里有数据、上面却说尚未分析」的错配 */
+      renderResult(records[0]);
+    }
+  }
+
+  /* 页面打开时把后端历史拉回来。这是「清空后刷新恢复」的机制：
+     清空只动内存里的 records，CSV 一直在后端，刷新就重新读一遍。
+     只展示本次启动之后新增的记录 —— CSV 里早先留下的行（项目早期数据、
+     校验数据集）不再挤进实时视图。它们还在文件里，只是不上屏。 */
+  function loadBackendHistory(hostIdx) {
+    hostIdx = hostIdx || 0;
+    if (hostIdx >= API_HOSTS.length) {
+      showNotice('连不上后端服务，历史记录未能从服务器加载（本地记录仍会显示，分析也照常可用）。');
+      return;
+    }
+
+    var base = API_HOSTS[hostIdx];
+
+    fetch(base + '/api/serverInfo')
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .then(function (info) {
+        var since = info && info.started_at ? String(info.started_at) : '';
+        return fetch(base + '/api/getHistory')
+          .then(function (res) {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.json();
+          })
+          .then(function (rows) {
+            if (!Array.isArray(rows)) throw new Error('返回的不是数组');
+            apiBase = base;
+            serverStartedAt = since;
+            hideNotice();
+
+            /* 时间戳格式两端一致（%Y-%m-%d %H:%M:%S），直接按字符串比大小就够 */
+            var fresh = since
+              ? rows.filter(function (row) { return String(row.time || '') >= since; })
+              : rows;
+
+            /* 再滤一道清零点：点过「清空」之后，那之前的行就永远不上屏了。
+               这里读的是当前值而不是请求发起时的值 —— 请求在飞的时候用户点了清空，
+               迟到的响应也得按新的线过滤，否则刚清完的记录会被它整批灌回来。
+               严格大于：与清空同一秒内新建的那条靠下面的本地合并补回来，
+               不会因为「和清零点同秒」被判出局 */
+            if (clearedBefore) {
+              fresh = fresh.filter(function (row) { return String(row.time || '') > clearedBefore; });
+            }
+
+            /* 后端是正序（旧在前），页面是倒序（新在前），翻转一下；
+               只取最近 MAX_RECORDS 条，和本地新建记录的上限保持一致 */
+            var merged = fresh.slice(-MAX_RECORDS).map(mapRowToRecord).reverse();
+
+            /* 合并本地已有、后端还没有的记录。
+               这个请求可能要跑几秒（第一个地址连不上要等超时），期间用户多半已经
+               分析过几条了 —— 直接用后端的列表覆盖，会把这几条当场抹掉，
+               表现就是「刚分析完就没了」。所以按时间戳对齐后补回去。 */
+            var seen = {};
+            merged.forEach(function (r) { seen[r.timeText] = true; });
+            records.slice().reverse().forEach(function (r) {
+              if (r.timeText && !seen[r.timeText]) { merged.unshift(r); seen[r.timeText] = true; }
+            });
+
+            records = merged.slice(0, MAX_RECORDS);
+            serial = records.length;
+            renderHistory();
+          });
+      })
+      .catch(function () {
+        loadBackendHistory(hostIdx + 1);
+      });
+  }
+
+  /* 上传媒体：文件 + 类型 + 当时的温湿度 → 后端落盘 data/media 并记一行 CSV。
+     成功后拿后端返回的时间戳/文件名在本地也插一条，用户拍完立刻能在历史里看到，不用刷新 */
+  function uploadMedia(blob, fileName, mediaType, reading, onSuccess, onError) {
+    var form = new FormData();
+    form.append('file', blob, fileName);
+    form.append('media_type', mediaType);
+    form.append('temperature', String(reading.temperature));
+    form.append('humidity', String(reading.humidity));
+
+    /* 已经连上过就用那个地址，省一次失败探测；没连上就挨个试 */
+    var hosts = apiBase ? [apiBase] : API_HOSTS.slice();
+
+    function attempt(idx) {
+      if (idx >= hosts.length) {
+        onError('连不上后端，上传失败。请确认后端已启动（python app.py）。');
+        return;
+      }
+
+      fetch(hosts[idx] + '/api/uploadMedia', { method: 'POST', body: form })
+        .then(function (res) {
+          return res.json().catch(function () { return {}; }).then(function (json) {
+            if (res.ok) {
+              apiBase = hosts[idx];
+              hideNotice();
+
+              var row = {
+                time: json.time,
+                temperature: reading.temperature,
+                humidity: reading.humidity
+              };
+              row[MEDIA_FIELD[mediaType]] = json.filename;
+
+              records.unshift(mapRowToRecord(row));
+              if (records.length > MAX_RECORDS) {
+                records.length = MAX_RECORDS;
+              }
+              renderHistory();
+              onSuccess(json);
+            } else if (res.status >= 500) {
+              attempt(idx + 1);
+            } else {
+              onError(json.msg || ('上传被拒绝（HTTP ' + res.status + '）'));
+            }
+          });
+        })
+        .catch(function () {
+          attempt(idx + 1);
+        });
+    }
+
+    attempt(0);
+  }
+
+  /* 当前读数：取最近一次分析。没有分析记录就返回 null ——
+     拍照/录像/录音都要往 CSV 里写温湿度，没有读数就没有环境上下文可记 */
+  function getCurrentReading() {
+    if (!records.length) return null;
+    var r = records[0];
+    return {
+      temperature: r.temperature,
+      humidity: r.humidity,
+      tempState: r.tempState,
+      humidityState: r.humidityState,
+      summary: r.summary,
+      timeText: r.timeText
+    };
+  }
+
+  /* 最近 n 条，供「查看历史」语音播报用 */
+  function getRecentRecords(n) {
+    return records.slice(0, n).map(function (r) {
+      return {
+        temperature: r.temperature,
+        humidity: r.humidity,
+        summary: r.summary,
+        timeText: r.timeText
+      };
+    });
   }
 
   /* ---------------- 主流程 ---------------- */
@@ -365,22 +766,6 @@ let mediaStream = null; // 保存摄像头流，用来判断摄像头是否开�
     });
 
 
-
-
-fetch(`http://192.168.131.200:5000/api/addRecord`,{
-  method:"POST",
-  headers:{"Content-Type":"application/json"},
-  body:JSON.stringify({
-    temp: values.temperature,
-    humi: values.humidity,
-    statusText:"正常"
-  })
-})
-
-
-
-
-
     /* 校验不通过：只提示，不分析、不写历史 */
     if (errors.length > 0) {
       showErrors(errors);
@@ -404,7 +789,11 @@ fetch(`http://192.168.131.200:5000/api/addRecord`,{
       overall: overall,
       headline: buildHeadline(tempState, humidityState),
       suggestions: buildSuggestions(tempState, humidityState),
-      summary: buildSummary(tempState, humidityState)
+      summary: buildSummary(tempState, humidityState),
+      /* 媒体文件名索引，拍照/录像/录音后回填，导出时跟着一起写进 CSV */
+      photoName: '',
+      videoName: '',
+      audioName: ''
     };
 
     records.unshift(record);
@@ -414,11 +803,25 @@ fetch(`http://192.168.131.200:5000/api/addRecord`,{
 
     renderResult(record);
     renderHistory();
+
+    /* 校验通过才同步后端 —— 校验前就发请求的话，非法输入也会被记进 CSV */
+    postRecordToBackend(record);
   }
 
+  /* 清空 = 真清空：列表清零，下一条从 #1 重新数，之前的数据不再回来（刷新也不回来）。
+     实现上是把清零点记下来（clearedBefore），之后后端来的行只要不晚于这个点就一律不认。
+     注意这仍然是「页面上不显示」，不是「删数据」：
+     后端没有删除接口，CSV 和 data/media 里的文件一个字都没动，
+     需要旧数据时把后端 CSV 直接打开就能看到。
+     输入框刻意保留：用户要的是「温湿度下面自动保留最后一次输入」，
+     清完历史多半是要接着录下一条，把刚填好的数字抹掉只会逼他重敲一遍。 */
   function handleReset() {
     clearErrors();
-    showRejected('尚未分析。请输入温度与湿度后点击「分析」。');
+    clearedBefore = formatTime(new Date());
+    records = [];
+    serial = 0;
+    renderHistory();  /* 存档挂在里面，清零点跟着一起落盘 */
+    showRejected('已清空，下一条记录从 #1 开始。请输入温度与湿度后点击「分析」。');
     els.temperature.focus();
   }
 
@@ -431,6 +834,10 @@ fetch(`http://192.168.131.200:5000/api/addRecord`,{
         !els.humidity.classList.contains('is-invalid')) {
       els.errorBox.hidden = true;
     }
+
+    /* 边敲边存。只靠 renderHistory 存档的话，敲完没点分析就刷新（Live Server 会自动刷新）
+       这几个字就白敲了 —— 用户要的正是「输入框自动保留上一次的温湿度」 */
+    persist();
   }
 
   els.form.addEventListener('submit', handleSubmit);
@@ -439,7 +846,27 @@ fetch(`http://192.168.131.200:5000/api/addRecord`,{
   els.temperature.addEventListener('input', handleInput);
   els.humidity.addEventListener('input', handleInput);
 
+  /* 摄像头和语音模块在各自的 IIFE 里，只能看见 DOM，够不到这里的 records/exportCsv。
+     挂一个最小接口出去，比把三个闭包合成一个的大改动划算得多 */
+  window.DormMate = {
+    exportCsv: exportCsv,
+    clearAll: handleReset,
+    getCurrentReading: getCurrentReading,
+    getRecentRecords: getRecentRecords,
+    getApiBase: function () { return apiBase; },
+    getServerStartedAt: function () { return serverStartedAt; },
+    uploadMedia: uploadMedia,
+    getCsvText: buildCsv,
+    showNotice: showNotice
+  };
+
+  /* 先恢复本地存档，再拉后端。顺序不能反：initialize 之后 records 里已经有东西了，
+     loadBackendHistory 回来时做的是合并不是覆盖（见那里的注释），不会把刚恢复的顶掉。
+     反过来先拉后端的话，后端连不上就没得恢复，用户看到的就是一片空白 */
+  restore();
   renderHistory();
+  /* 页面打开就把后端历史拉回来：清空之后刷新能全部恢复，靠的就是这一步 */
+  loadBackendHistory();
 })();
 
 /* ============================================================
@@ -453,6 +880,10 @@ fetch(`http://192.168.131.200:5000/api/addRecord`,{
   var canvas = document.getElementById('camera-canvas');
   var previewBtn = document.getElementById('camera-preview-btn');
   var snapBtn = document.getElementById('camera-snap-btn');
+  var recordBtn = document.getElementById('camera-record-btn');
+  var discardBtn = document.getElementById('camera-discard-btn');
+  var keepBtn = document.getElementById('camera-keep-btn');
+  var dropBtn = document.getElementById('camera-drop-btn');
   var statusEl = document.getElementById('camera-status');
   var metaEl = document.getElementById('camera-meta');
 
@@ -461,6 +892,58 @@ fetch(`http://192.168.131.200:5000/api/addRecord`,{
   }
 
   var stream = null;
+  /* 不选设备，交给浏览器挑默认的那个（桌面就一个摄像头，手机默认给后置）。
+     拿到流之后再读轨道上报的朝向，只为了决定要不要做左右镜像 */
+  var facingMode = 'environment';
+  var recorder = null;
+  var chunks = [];
+  var recordTimer = null;
+  /* 这段录像结束的原因：'' 正常结束（上传）/ 'discard' 用户放弃 / 'error' 出错。
+     收尾统一在 onstop 里做，这里只记原因 —— 否则 onerror 和 onstop 会各扫一遍地，
+     后跑的那个会把前一个的提示语覆盖掉 */
+  var endReason = '';
+
+  /* 录像时长上限。定 10 秒是产品和存储两头妥协的结果：
+     再长单个文件就上几十 MB，而 data/media 是要整体复制的 */
+  var MAX_RECORD_MS = 10000;
+
+  /* 浏览器对录像容器的支持不统一，Chrome 认 webm，Safari 只认 mp4。
+     按优先级挑第一个能用的，都挑不出来就别开录（硬着头皮录会得到 0 字节文件） */
+  var VIDEO_MIMES = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
+
+  function pickVideoMime() {
+    if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return '';
+    for (var i = 0; i < VIDEO_MIMES.length; i++) {
+      if (MediaRecorder.isTypeSupported(VIDEO_MIMES[i])) return VIDEO_MIMES[i];
+    }
+    return '';
+  }
+
+  /* 取当前读数。没有分析记录就拦下来 —— CSV 那行必须有温湿度，
+     否则拍下来的东西只是一堆没有环境上下文的文件 */
+  function requireReading() {
+    var reading = window.DormMate && window.DormMate.getCurrentReading
+      ? window.DormMate.getCurrentReading()
+      : null;
+
+    if (!reading) {
+      setStatus('请先在上方「数据录入」完成一次温湿度分析，再拍照或录像。', true);
+      return null;
+    }
+    return reading;
+  }
+
+  /* 上传回调统一收口：三个入口（拍照/录像/录音）的提示语只有名词不同 */
+  function uploadCallbacks(label) {
+    return {
+      onSuccess: function (json) {
+        setStatus(label + '已上传并记入历史：' + json.filename);
+      },
+      onError: function (err) {
+        setStatus(err, true);
+      }
+    };
+  }
 
   /* M1 的 formatTime 在另一个闭包里取不到，M3 内保留一份等价的 4 行实现 */
   function formatTime(date) {
@@ -495,6 +978,25 @@ fetch(`http://192.168.131.200:5000/api/addRecord`,{
     return '开启预览失败：' + ((err && err.message) || '未知错误');
   }
 
+  /* 轨道上真实生效的 facingMode。读不到就返回空串，交给调用方保留原值 */
+  function readFacingMode(ms) {
+    try {
+      var track = ms.getVideoTracks && ms.getVideoTracks()[0];
+      var settings = track && track.getSettings ? track.getSettings() : null;
+      return (settings && settings.facingMode) ? String(settings.facingMode) : '';
+    } catch (err) {
+      return '';
+    }
+  }
+
+  /* 前置画面按视频通话的习惯做左右镜像：不镜像的话，人往左动画面往右走，看着别扭。
+     后置不镜像 —— 镜像后置会让画面里的文字全反着显示。
+     朝向只认轨道自己报的 facingMode：浏览器不报（桌面外接摄像头常见）就不镜像。
+     不按设备顺序猜 —— 猜错的代价是把一个朝着房间的摄像头也镜像了，画面里的字全反 */
+  function applyMirror() {
+    video.style.transform = facingMode === 'user' ? 'scaleX(-1)' : '';
+  }
+
   function onPreview() {
     if (stream) {
       setStatus('预览已开启，无需重复操作。');
@@ -507,8 +1009,18 @@ fetch(`http://192.168.131.200:5000/api/addRecord`,{
 
     setStatus('正在请求摄像头权限…');
 
+    /* 不指定设备，让浏览器给默认的那个。
+       用 ideal 而不是 exact：exact 在设备不匹配时直接失败（OverconstrainedError），
+       连预览都开不起来 */
     navigator.mediaDevices
-      .getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false })
+      .getUserMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: { ideal: facingMode }
+        },
+        audio: false
+      })
       .then(function (ms) {
         /* 参数不能叫 mediaStream，否则会遮蔽全局变量，下面那行赋值就落不到全局上 */
         stream = ms;
@@ -520,11 +1032,81 @@ fetch(`http://192.168.131.200:5000/api/addRecord`,{
         if (played && typeof played.catch === 'function') {
           played.catch(function () {});
         }
+
+        /* 以轨道上报的实际朝向为准，只用来决定要不要镜像 */
+        var actual = readFacingMode(ms);
+        if (actual) facingMode = actual;
+        applyMirror();
+
         snapBtn.disabled = false;
-        setStatus('预览已开启，点击「抓拍快照」生成图片。');
+        if (recordBtn) recordBtn.disabled = false;
+
+        setStatus('预览已开启，点击「抓拍快照」或「开始录像」。');
       })
       .catch(function (err) {
         setStatus(mapError(err), true);
+      });
+  }
+
+  /* ---------------- 抓拍：先定格，确认后才入历史 ---------------- */
+
+  /* 待确认的快照：{ blob, name, reading }。非空时画面处于定格状态，
+     摄像头相关的按钮全部让位给「保存快照 / 放弃快照」 */
+  var pendingSnap = null;
+
+  function clearPendingSnap() {
+    pendingSnap = null;
+    /* 上下两个框一直都在，所以这里不是把画布藏起来，而是把里面的图擦掉 ——
+       框还留着，只是回到「空的定格位」。上面的实时预览从头到尾没动过 */
+    try {
+      var ctx = canvas.getContext('2d');
+      if (ctx && canvas.width) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    } catch (err) { /* 擦不掉也不影响流程，下次抓拍会整块重画 */ }
+
+    if (keepBtn) keepBtn.hidden = true;
+    if (dropBtn) dropBtn.hidden = true;
+    if (metaEl) metaEl.hidden = true;
+
+    /* 回到实时画面，按钮恢复可点（没流的时候保持禁用） */
+    if (stream) {
+      snapBtn.disabled = false;
+      if (recordBtn) recordBtn.disabled = false;
+    }
+  }
+
+  function onDropSnap() {
+    if (!pendingSnap) return;
+    clearPendingSnap();
+    setStatus('已放弃这张快照，未上传、未写入历史。画面回到实时预览。');
+  }
+
+  function onKeepSnap() {
+    if (!pendingSnap) return;
+
+    if (!window.DormMate || !window.DormMate.uploadMedia) {
+      setStatus('上传模块未就绪，图片未保存到后端。', true);
+      return;
+    }
+
+    var snap = pendingSnap;
+    if (keepBtn) keepBtn.disabled = true;
+    if (dropBtn) dropBtn.disabled = true;
+    setStatus('正在上传快照…');
+
+    var cb = uploadCallbacks('快照');
+    window.DormMate.uploadMedia(snap.blob, snap.name, 'photo', snap.reading,
+      function (json) {
+        clearPendingSnap();
+        if (keepBtn) keepBtn.disabled = false;
+        if (dropBtn) dropBtn.disabled = false;
+        cb.onSuccess(json);
+      },
+      function (err) {
+        /* 上传失败就把这张留着：定格还在，用户点「保存快照」能重试。
+           直接丢弃的话，网络抖一下这张就白拍了 */
+        if (keepBtn) keepBtn.disabled = false;
+        if (dropBtn) dropBtn.disabled = false;
+        setStatus(err + '（画面仍是定格的，可重试「保存快照」）', true);
       });
   }
 
@@ -533,11 +1115,22 @@ fetch(`http://192.168.131.200:5000/api/addRecord`,{
       setStatus('请先开启预览，等画面出现后再抓拍快照。', true);
       return;
     }
+    if (pendingSnap) {
+      setStatus('已经有一张待确认的快照，请先「保存快照」或「放弃快照」。', true);
+      return;
+    }
+
+    /* 先要读数再画布：没有分析记录时直接拦下 ——
+       CSV 那行要带温湿度，拍完再说「没有读数」等于白拍 */
+    var reading = requireReading();
+    if (!reading) return;
 
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     canvas.getContext('2d').drawImage(video, 0, 0);
-    canvas.hidden = false;
+
+    /* 上下两个框都留着：上面 video 是实时预览，下面 canvas 是这张定格图。
+       流不关 —— 放弃时把定格图擦掉就行，不用重新取一次流 */
 
     if (metaEl) {
       metaEl.hidden = false;
@@ -545,11 +1138,177 @@ fetch(`http://192.168.131.200:5000/api/addRecord`,{
         '　分辨率：' + video.videoWidth + ' × ' + video.videoHeight;
     }
 
-    setStatus('已抓拍快照，图片已生成在下方画布。');
+    /* 编码放在定格这一刻做，确认时直接上传，不用等 */
+    var stamp = Date.now();
+    canvas.toBlob(function (blob) {
+      if (!blob) {
+        /* 编码失败就退回实时画面，别把用户卡在一个永远存不下来的定格上 */
+        clearPendingSnap();
+        setStatus('抓拍图片编码失败，请重试。', true);
+        return;
+      }
+
+      pendingSnap = { blob: blob, name: 'snap_' + stamp + '.jpg', reading: reading };
+
+      if (keepBtn) { keepBtn.hidden = false; keepBtn.disabled = false; }
+      if (dropBtn) { dropBtn.hidden = false; dropBtn.disabled = false; }
+      /* 定格期间不许再抓、不许录 —— 画面已经不是实时的了 */
+      snapBtn.disabled = true;
+      if (recordBtn) recordBtn.disabled = true;
+
+      setStatus('画面已定格。点「保存快照」记入历史并上传，或「放弃快照」回到实时画面。');
+    }, 'image/jpeg', 0.92);
+  }
+
+  /* ---------------- 录像 ---------------- */
+
+  /* 录像按钮态：录制中显示「停止录像」+ 红色，同时放开「放弃录像」。
+     放弃按钮只在录制中可用 —— 没在录的时候它没有意义 */
+  function setRecordingUI(on) {
+    if (recordBtn) {
+      recordBtn.textContent = on ? '停止录像' : '开始录像';
+      if (on) {
+        recordBtn.classList.add('is-recording');
+      } else {
+        recordBtn.classList.remove('is-recording');
+      }
+    }
+    if (discardBtn) discardBtn.disabled = !on;
+  }
+
+  /* 录像收尾。reason 见 endReason 的说明，默认空串＝正常结束并上传 */
+  function stopRecording(reason) {
+    endReason = reason || '';
+    if (recordTimer) {
+      clearTimeout(recordTimer);
+      recordTimer = null;
+    }
+    /* stop() 会触发 onstop，收尾和上传全在那边，这里只负责停下来 */
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.stop();
+    }
+  }
+
+  /* 放弃：录到一半反悔了。走的是和正常停止同一条路，只是 onstop 里不上传 */
+  function onDiscard() {
+    if (!recorder || recorder.state !== 'recording') {
+      setStatus('当前没有正在进行的录像。', true);
+      return;
+    }
+    stopRecording('discard');
+  }
+
+  function onRecordToggle() {
+    if (recorder && recorder.state === 'recording') {
+      stopRecording('');
+      return;
+    }
+
+    if (pendingSnap) {
+      setStatus('有还没确认的快照，请先「保存快照」或「放弃快照」再录像。', true);
+      return;
+    }
+    if (!stream || video.readyState < 2) {
+      setStatus('请先开启预览，等画面出现后再录像。', true);
+      return;
+    }
+
+    var reading = requireReading();
+    if (!reading) return;
+
+    if (typeof MediaRecorder === 'undefined') {
+      setStatus('当前浏览器不支持录像（MediaRecorder 不可用）。', true);
+      return;
+    }
+    if (!window.DormMate || !window.DormMate.uploadMedia) {
+      setStatus('上传模块未就绪，无法保存录像。', true);
+      return;
+    }
+
+    var mime = pickVideoMime();
+    if (!mime) {
+      setStatus('当前浏览器没有可用的录像格式，无法录制。', true);
+      return;
+    }
+
+    chunks = [];
+    try {
+      recorder = new MediaRecorder(stream, { mimeType: mime });
+    } catch (err) {
+      setStatus('录像启动失败：' + ((err && err.message) || '未知错误'), true);
+      return;
+    }
+
+    recorder.ondataavailable = function (event) {
+      if (event.data && event.data.size > 0) chunks.push(event.data);
+    };
+
+    recorder.onstop = function () {
+      if (recordTimer) {
+        clearTimeout(recordTimer);
+        recordTimer = null;
+      }
+      setRecordingUI(false);
+
+      var blob = new Blob(chunks, { type: mime });
+      chunks = [];
+
+      var reason = endReason;
+      endReason = '';
+      recorder = null;
+
+      /* 退出原因优先于内容判断：先看用户是不是放弃了、是不是出错了，再看有没有内容。
+         丢弃只发生在这里 —— 后端没有删除接口，一旦上传就撤不回来了 */
+      if (reason === 'discard') {
+        setStatus('已放弃这段录像，未上传、未写入 CSV。');
+        return;
+      }
+      if (reason === 'error') {
+        setStatus('录像过程中出错，这段没有上传。', true);
+        return;
+      }
+
+      if (!blob.size) {
+        setStatus('录像内容为空（可能刚开录就停了），未上传。', true);
+        return;
+      }
+
+      /* 扩展名跟着实际 mime 走：后端白名单只认 mp4/webm，
+         写成 .webm 却塞 mp4 内容的话浏览器回放时解不出来 */
+      var ext = mime.indexOf('mp4') >= 0 ? 'mp4' : 'webm';
+      var cb = uploadCallbacks('录像');
+      setStatus('正在上传录像（' + Math.round(blob.size / 1024) + ' KB）…');
+      window.DormMate.uploadMedia(blob, 'clip_' + Date.now() + '.' + ext, 'video', reading,
+        cb.onSuccess, cb.onError);
+    };
+
+    recorder.onerror = function () {
+      /* 只记原因，收尾统一交给 onstop —— 按规范出错后引擎也会再发一次 stop，
+         两边都收尾的话后跑的那个会把前一个的提示语盖掉 */
+      endReason = 'error';
+      stopRecording('error');   /* 出错的那段别上传，留着也是坏文件 */
+    };
+
+    endReason = '';
+    recorder.start();
+    setRecordingUI(true);
+    setStatus('录像中…最长 ' + (MAX_RECORD_MS / 1000) + ' 秒，到时会自动停止并上传；' +
+      '不想要这段就点「放弃录像」。');
+
+    recordTimer = setTimeout(function () {
+      if (recorder && recorder.state === 'recording') {
+        setStatus('已录满 ' + (MAX_RECORD_MS / 1000) + ' 秒，正在上传…');
+        stopRecording(false);
+      }
+    }, MAX_RECORD_MS);
   }
 
   previewBtn.addEventListener('click', onPreview);
   snapBtn.addEventListener('click', onSnap);
+  if (recordBtn) recordBtn.addEventListener('click', onRecordToggle);
+  if (discardBtn) discardBtn.addEventListener('click', onDiscard);
+  if (keepBtn) keepBtn.addEventListener('click', onKeepSnap);
+  if (dropBtn) dropBtn.addEventListener('click', onDropSnap);
 })();
 
 /* ============================================================
@@ -562,6 +1321,7 @@ fetch(`http://192.168.131.200:5000/api/addRecord`,{
   'use strict';
 
   var toggleBtn = document.getElementById('voice-toggle-btn');
+  var recordBtn = document.getElementById('voice-record-btn');
   var statusEl = document.getElementById('voice-status');
   var transcriptEl = document.getElementById('voice-transcript');
   var logEl = document.getElementById('voice-log');
@@ -734,6 +1494,272 @@ fetch(`http://192.168.131.200:5000/api/addRecord`,{
     speak(text);
   }
 
+  /* ---------------- 「分析环境」话术 ---------------- */
+
+  /* 数字口语化：16 就说 16，16.5 说 16.5 */
+  function numText(value) {
+    var n = Number(value);
+    return Number.isInteger(n) ? String(n) : n.toFixed(1);
+  }
+
+  /* 环境分析话术。偏冷、偏热、偏湿三种单异常的输出是用户逐字定下的，别改写：
+       16/60 → 当前温度16℃，湿度60%，环境偏冷，建议增添衣物，关闭窗户减少冷风进入。
+       31/60 → 当前温度31℃，湿度60%，环境偏热，建议开窗通风，适当使用风扇。
+       25/80 → 当前温度25℃，湿度80%，环境偏湿，建议开启除湿设备。
+     复合状态（偏冷+偏湿、偏热+偏湿）范例里没有，按同一句式拼出来。
+     注意：这段文本直接交给 TTS，不走 speakable() —— 用户要的就是这个逐字输出。 */
+  function buildEnvSpeech(t, h) {
+    var head = '当前温度' + numText(t) + '℃，湿度' + numText(h) + '%，环境';
+
+    if (t < 18 && h >= 75) {
+      return head + '偏冷偏湿，建议增添衣物、关闭窗户减少冷风进入，同时开启除湿设备。';
+    }
+    if (t >= 30 && h >= 75) {
+      return head + '偏热偏湿，建议开窗通风、适当使用风扇，同时开启除湿设备。';
+    }
+    if (t < 18) {
+      return head + '偏冷，建议增添衣物，关闭窗户减少冷风进入。';
+    }
+    if (t >= 30) {
+      return head + '偏热，建议开窗通风，适当使用风扇。';
+    }
+    if (h >= 75) {
+      return head + '偏湿，建议开启除湿设备。';
+    }
+    return head + '舒适，温湿度均正常。';
+  }
+
+  function readEnvironment() {
+    var bridge = win.DormMate;
+    var reading = bridge && bridge.getCurrentReading ? bridge.getCurrentReading() : null;
+
+    if (!reading) {
+      setStatus('暂无分析记录，请先输入温湿度并点击「分析」。');
+      speak('暂无分析记录，请先输入温湿度并点击分析。');
+      return;
+    }
+
+    var text = buildEnvSpeech(reading.temperature, reading.humidity);
+    setStatus(text);
+    speak(text);
+  }
+
+  /* ---------------- 其余语音指令 ---------------- */
+
+  /* 清空只清前端。回话里刻意不含「清空历史」四个字 ——
+     TTS 的声音会被麦克风收回，含指令原词就会自己触发自己 */
+  function clearHistory() {
+    var bridge = win.DormMate;
+    if (!bridge || !bridge.clearAll) {
+      setStatus('清空失败：页面模块未就绪。', true);
+      return;
+    }
+
+    bridge.clearAll();
+    var text = '页面记录已清空，后端数据不受影响，刷新页面就能恢复。';
+    setStatus(text);
+    speak(text);
+  }
+
+  function readHistory() {
+    var bridge = win.DormMate;
+    var recent = bridge && bridge.getRecentRecords ? bridge.getRecentRecords(3) : [];
+
+    if (!recent.length) {
+      setStatus('暂无历史记录。');
+      speak('暂无历史记录。');
+      return;
+    }
+
+    var parts = recent.map(function (r, i) {
+      return '第' + (i + 1) + '条，' + r.timeText +
+        '，温度' + numText(r.temperature) + '摄氏度，湿度百分之' + numText(r.humidity) +
+        '，状态' + r.summary;
+    });
+    var text = '最近' + recent.length + '条记录：' + parts.join('；') + '。';
+    setStatus(text);
+    speak(text);
+  }
+
+  function exportCsvByVoice() {
+    var bridge = win.DormMate;
+    if (!bridge || !bridge.exportCsv) {
+      setStatus('导出失败：页面模块未就绪。', true);
+      return;
+    }
+
+    var recent = bridge.getRecentRecords(1);
+    if (!recent.length) {
+      setStatus('暂无记录，无法导出。');
+      speak('暂无记录，无法导出。');
+      return;
+    }
+
+    bridge.exportCsv();
+    /* 回话同样避开「导出csv」原词 */
+    var text = '表格已导出。完整保存图片、视频和录音，还需同时复制媒体文件夹。';
+    setStatus('已触发导出，浏览器会下载 dormmate.csv。' + text);
+    speak(text);
+  }
+
+  /* ---------------- 录音（独立于语音识别） ---------------- */
+
+  var audioRecorder = null;
+  var audioChunks = [];
+  var audioStream = null;
+  var recording = false;
+
+  var AUDIO_MIMES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/mpeg'];
+
+  function pickAudioMime() {
+    if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return '';
+    for (var i = 0; i < AUDIO_MIMES.length; i++) {
+      if (MediaRecorder.isTypeSupported(AUDIO_MIMES[i])) return AUDIO_MIMES[i];
+    }
+    return '';
+  }
+
+  function setRecordButton(on) {
+    if (!recordBtn) return;
+    recordBtn.textContent = on ? '停止录音' : '开始录音';
+    if (on) {
+      recordBtn.classList.add('is-recording');
+    } else {
+      recordBtn.classList.remove('is-recording');
+    }
+  }
+
+  function mapMicError(err) {
+    var name = err && err.name;
+    if (name === 'NotAllowedError' || name === 'SecurityError') {
+      return '麦克风权限被拒绝，请在浏览器地址栏允许访问后重试。';
+    }
+    if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+      return '未找到麦克风，请确认设备已连接。';
+    }
+    if (name === 'NotReadableError' || name === 'TrackStartError') {
+      return '麦克风被其他程序占用，请关闭占用程序后重试。';
+    }
+    return '录音失败：' + ((err && err.message) || '未知错误');
+  }
+
+  function releaseMic() {
+    if (audioStream) {
+      audioStream.getTracks().forEach(function (track) { track.stop(); });
+      audioStream = null;
+    }
+  }
+
+  function stopVoiceRecording() {
+    if (!recording || !audioRecorder) {
+      setStatus('当前没有正在进行的录音。');
+      return;
+    }
+    /* 只负责停，上传全在 onstop 里 */
+    if (audioRecorder.state !== 'inactive') {
+      audioRecorder.stop();
+    }
+  }
+
+  function startVoiceRecording() {
+    if (recording) {
+      setStatus('录音已在进行中。');
+      return;
+    }
+
+    var bridge = win.DormMate;
+    if (!win || !win.navigator || !win.navigator.mediaDevices || !win.navigator.mediaDevices.getUserMedia) {
+      setStatus('当前环境不支持录音，请通过 localhost 或 HTTPS 打开本页。', true);
+      return;
+    }
+    if (typeof MediaRecorder === 'undefined') {
+      setStatus('当前浏览器不支持录音（MediaRecorder 不可用）。', true);
+      return;
+    }
+    if (!bridge || !bridge.uploadMedia) {
+      setStatus('上传模块未就绪，无法录音。', true);
+      return;
+    }
+
+    var reading = bridge.getCurrentReading ? bridge.getCurrentReading() : null;
+    if (!reading) {
+      var hint = '请先完成一次温湿度分析，录音才能记入历史。';
+      setStatus(hint, true);
+      speak(hint);
+      return;
+    }
+
+    var mime = pickAudioMime();
+    if (!mime) {
+      setStatus('当前浏览器没有可用的录音格式，无法录制。', true);
+      return;
+    }
+
+    setStatus('正在请求麦克风权限…');
+
+    win.navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(function (ms) {
+        audioStream = ms;
+        audioChunks = [];
+        audioRecorder = new MediaRecorder(ms, { mimeType: mime });
+
+        audioRecorder.ondataavailable = function (event) {
+          if (event.data && event.data.size > 0) audioChunks.push(event.data);
+        };
+
+        audioRecorder.onstop = function () {
+          recording = false;
+          setRecordButton(false);
+          releaseMic();
+
+          var blob = new Blob(audioChunks, { type: mime });
+          audioChunks = [];
+          audioRecorder = null;
+
+          if (!blob.size) {
+            setStatus('录音内容为空，未上传。', true);
+            return;
+          }
+
+          /* 扩展名跟实际编码走，后端白名单只认 mp3/aac/webm/m4a */
+          var ext = mime.indexOf('mp4') >= 0 ? 'm4a' : (mime.indexOf('mpeg') >= 0 ? 'mp3' : 'webm');
+          setStatus('正在上传录音（' + Math.round(blob.size / 1024) + ' KB）…');
+
+          bridge.uploadMedia(blob, 'voice_' + Date.now() + '.' + ext, 'audio', reading,
+            function (json) {
+              setStatus('录音已上传并记入历史：' + json.filename);
+              speak('录音已保存。');
+            },
+            function (err) { setStatus(err, true); });
+        };
+
+        audioRecorder.onerror = function () {
+          recording = false;
+          setRecordButton(false);
+          releaseMic();
+          setStatus('录音过程中出错，已中断。', true);
+        };
+
+        audioRecorder.start();
+        recording = true;
+        setRecordButton(true);
+        setStatus('录音中…再次点击「停止录音」，或直接说「停止录音」来结束。');
+      })
+      .catch(function (err) {
+        releaseMic();
+        setStatus(mapMicError(err), true);
+        speak(mapMicError(err));
+      });
+  }
+
+  function onRecordToggle() {
+    if (recording) {
+      stopVoiceRecording();
+    } else {
+      startVoiceRecording();
+    }
+  }
+
   /* ---------------- 语音指令 ---------------- */
 
   function takeSnapshot() {
@@ -750,16 +1776,54 @@ fetch(`http://192.168.131.200:5000/api/addRecord`,{
     if (!snapBtn) {
       return;
     }
-    /* 禁用按钮的 click() 是空操作，必须先查 disabled 才有提示 */
+    /* 禁用按钮的 click() 是空操作，必须先查 disabled 才有提示。
+       抓拍现在是两步，按钮在「有快照待确认」时也是禁用的，这两种情况要分开说 */
     if (snapBtn.disabled) {
-      setStatus('请先开启摄像头预览，再下达抓拍指令。', true);
-      speak('请先开启摄像头预览，再下达抓拍指令。');
+      var blocked = (keepBtn && !keepBtn.hidden)
+        ? '已经有一张待确认的快照，请先保存或放弃这一张。'
+        : '请先开启摄像头预览，再下达抓拍指令。';
+      setStatus(blocked, true);
+      speak(blocked);
       return;
     }
+
+    /* 没有分析记录时摄像头那边会拒绝抓拍，这里先拦一道 ——
+       否则会播报「已完成抓拍」，而实际什么也没存下来 */
+    var bridge = win.DormMate;
+    if (!bridge || !bridge.getCurrentReading || !bridge.getCurrentReading()) {
+      var hint = '请先完成一次温湿度分析，再下达抓拍指令。';
+      setStatus(hint, true);
+      speak(hint);
+      return;
+    }
+
     snapBtn.click();   /* 复用 M3 阶段1 的抓拍逻辑，不改动相机代码 */
-    setStatus('已通过语音指令触发抓拍。');
-    speak('已完成抓拍。');
+    /* 抓拍只负责定格，入历史要用户在摄像头区域再确认一次。
+       回话里不能说「已保存/已上传」——那是确认之后才会发生的事。
+       同样避开「拍照」二字，防止被麦克风收回后自己触发自己 */
+    var ok = '画面已定格，请在摄像头区域点「保存快照」写入历史，或点「放弃快照」取消。';
+    setStatus(ok);
+    speak(ok);
   }
+
+  /* 指令表。顺序即匹配优先级：停止录音排在开始录音前面，
+     免得「停止录音」这种带否定的说法先撞上别的关键词。
+     key 用小写字，匹配前把识别文本也转小写并去掉空格（ASR 常把 csv 写成 CSV、
+     还会在英文词周围插空格）。数组里所有 key 必须互不为子串，否则短的那个会抢匹配。 */
+  var COMMANDS = [
+    { key: '停止录音', run: stopVoiceRecording, label: '停止录音' },
+    { key: '开始录音', run: startVoiceRecording, label: '开始录音' },
+    /* 拍照排在朗读状态之前：原实现就是「拍照先播提示、朗读最后播」，
+       speak() 是 cancel-and-replace，后说的胜出，所以朗读必须排在后面才会成为最终播报 */
+    { key: '拍照', run: takeSnapshot, label: '拍照' },
+    { key: '朗读状态', run: readStatus, label: '朗读状态' },
+    { key: '分析环境', run: readEnvironment, label: '分析环境' },
+    { key: '清空历史', run: clearHistory, label: '清空历史' },
+    { key: '导出csv', run: exportCsvByVoice, label: '导出csv' },
+    { key: '查看历史', run: readHistory, label: '查看历史' }
+  ];
+
+  var COMMAND_HINT = COMMANDS.map(function (c) { return '「' + c.label + '」'; }).join('');
 
   function handleFinal(text) {
     /* 冷却锁：上一条指令执行后 COMMAND_COOLDOWN_MS 内不再接受新指令。
@@ -768,22 +1832,25 @@ fetch(`http://192.168.131.200:5000/api/addRecord`,{
       return;
     }
 
-    var wantsSnap = text.indexOf('拍照') !== -1;
-    var wantsRead = text.indexOf('朗读状态') !== -1;
+    var normalized = String(text).toLowerCase().replace(/\s+/g, '');
+    var matched = [];
+    for (var i = 0; i < COMMANDS.length; i++) {
+      if (normalized.indexOf(COMMANDS[i].key) !== -1) {
+        matched.push(COMMANDS[i]);
+      }
+    }
 
-    if (!wantsSnap && !wantsRead) {
-      setStatus('未识别到指令，请说「朗读状态」或「拍照」。');
+    if (!matched.length) {
+      setStatus('未识别到指令，可说' + COMMAND_HINT + '。');
       return;
     }
 
     isRunningCommand = true;
-    if (wantsSnap) {
-      takeSnapshot();
-    }
-    /* 朗读放在最后：即使拍照先播了提示，cancel-and-replace 也保证朗读最终胜出 */
-    if (wantsRead) {
-      readStatus();
-    }
+    /* 一句话里说了多条就都执行。原来「拍照+朗读状态」就是这个行为
+       （朗读最后播、cancel-and-replace 让它胜出），改成表格后不能丢 */
+    matched.forEach(function (command) {
+      command.run();
+    });
     setTimeout(function () {
       isRunningCommand = false;
     }, COMMAND_COOLDOWN_MS);
@@ -882,7 +1949,7 @@ fetch(`http://192.168.131.200:5000/api/addRecord`,{
     manualStop = false;
     listening = true;
     setButton(true);
-    setStatus('正在监听，请说出「朗读状态」或「拍照」。');
+    setStatus('正在监听，可说「朗读状态」「分析环境」「拍照」「查看历史」等指令。');
     try {
       makeRecognition().start();
     } catch (err) {
@@ -916,8 +1983,15 @@ fetch(`http://192.168.131.200:5000/api/addRecord`,{
 
   /* ---------------- 初始守卫 ---------------- */
 
+  /* 录音按钮在这里就绑上，且必须在下面的 SR 守卫之前：
+     录音走的是 MediaRecorder，跟语音识别没关系，
+     不该因为插件缺失或识别服务不通而一起废掉 */
+  if (recordBtn) {
+    recordBtn.addEventListener('click', onRecordToggle);
+  }
+
   if (!SR) {
-    setStatus('当前浏览器不支持语音识别，请使用 Chrome 或 Edge 浏览器。', true);
+    setStatus('当前浏览器不支持语音识别，请使用 Chrome 或 Edge 浏览器（录音功能仍可用）。', true);
     toggleBtn.disabled = true;
     return;
   }

@@ -1,69 +1,58 @@
 # DormMate 宿舍温湿度监测系统
+> 仓库：nova-dormmate-final-2026
+> 已完成模块：M1~M5 + A1~A4事件处置闭环
 
-## 项目介绍
-DormMate是宿舍多节点温湿度监测系统。系统支持读取本地CSV温湿度数据进行校验、统计分析并生成可视化报告；网页端具备摄像头抓拍、语音识别交互能力；M5模块基于MQTT协议传输实时温湿度JSON数据，实现网页看板实时状态展示，并完成MQTT通信故障模拟验证。
+## 项目简介
+DormMate 是面向宿舍场景的多节点温湿度监测演示系统。系统支持离线读取CSV文件完成数据分析与绘图；基于MQTT协议接收 dorm-a、dorm-b、dorm-c 三个宿舍节点实时JSON温湿度报文，在网页看板和3D宿舍页面可视化展示环境状态。系统自动识别环境异常、计算异常优先级，支持下发设备控制指令；持续接收报文自动判定处置效果，全部异常与操作记录写入日志，自动生成带完整事件时间线的复盘网页报告。项目配套单元测试与端到端测试。
 
-## 业务判断规则
-温湿度独立判定，可同时存在多个状态标签：
-1. 温度 < 18 → 偏冷
-2. 温度 ≥ 30 → 偏热
-3. 湿度 ≥ 75 → 偏湿
-4. 不满足以上全部条件 → 正常
+## 环境判定规则
+温湿度独立判定，同一宿舍可同时存在多个状态标签：
+- 温度＜18℃ → 偏冷
+- 温度≥30℃ → 偏热
+- 湿度≥75% → 偏湿
+- 其余情况 → 正常
 
-## 回归测试数据集
-- 25℃ / 60% → 正常
-- 16℃ / 60% → 偏冷
-- 31℃ / 60% → 偏热
-- 25℃ / 80% → 偏湿
+## 功能总览
+1. **M1**：读取CSV温湿度数据，数据校验，判定环境状态
+2. **M2**：数据统计分析，生成温湿度趋势图与网页报告
+3. **M3**：网页摄像头抓拍、语音识别与语音播报，支持语音指令交互
+4. **M4**：采集的温湿度数据持久化存储至CSV文件
+5. **M5**：Mosquitto搭建MQTT实时通信服务，MQTTX模拟宿舍节点发送报文；完成错误Topic、非法JSON报文、Broker停机三类通信故障模拟测试
+6. **A1~A4事件处置闭环**：自动计算异常宿舍优先级；远程控制风扇、灯光、除湿机及学习/睡眠/离寝场景模式；接收新报文自动判断处置结果；全流程事件写入日志，生成事件复盘报告
 
-## 环境依赖
+## 📁 项目目录        DormMate-Final/
+├── 3d/                 # Three.js 3D宿舍可视化页面
+├── a1/                 # A1优先级判定核心脚本
+├── analysis/           # Python数据分析脚本，生成可视化与复盘报告
+├── dashboard/          # 实时环境看板页面
+├── data/               # 数据集、运行产生事件日志
+├── miniapp/            # 微信小程序前端代码
+├── report/             # 趋势图、输出网页报告
+├── web/                # M3多媒体页面（摄像头、语音交互）
+├── .gitignore
+├── app.py              # Flask后端，事件日志落盘、接口服务
+├── README.md
+├── requirements.txt
+└── server.py        ## 🛠️ 环境依赖
 Python3
-需要安装包：matplotlib
-Web前端：VS Code + Live Server，浏览器推荐Edge/Chrome
-M5模块额外依赖：Mosquitto MQTT Broker、MQTTX客户端
+前端：VS Code + Live Server，推荐Chrome/Edge浏览器
+MQTT服务：Mosquitto、MQTTX客户端
 
-## 运行步骤 & 启动方法
-1. 克隆项目到本地
-2. 安装Python依赖：`pip install -r requirements.txt`
-3. 执行数据分析脚本（M1+M2），运行完成后，在report目录生成 trend.png、report.html
-4. M3网页摄像头&语音交互模块：使用Live Server打开`web/index.html`，localhost环境运行，授予摄像头、麦克风权限。
-5. M5 MQTT实时通信模块：
-    ① 使用管理员身份打开终端，启动Mosquitto服务
-    ```bash
-    mosquitto -c mosquitto.conf
-    ```
-    ② 打开MQTTX，新建发布、订阅两组连接（ClientID不能相同）
-    ③ 订阅主题 `dormmate/dorm-c/env`
-    ④ 发布JSON报文，网页Dashboard接收消息并实时更新宿舍温湿度状态。
+Python依赖包：`pandas matplotlib scikit-learn flask flask-cors`
 
-## 项目目录结构
-- data: 存放CSV历史测试数据集
-- analysis: Python数据分析脚本analysis.py（M1、M2模块已完成）
-- web: Web主应用（M1，M2、M3模块已完成）
-- dashboard: 实时看板（M5已完成；M6待开发）
-- 3d: Three.js宿舍3D视图（待开发）
-- miniapp: 移动端小程序（已开发）
-- report: 脚本运行输出目录，保留trend.png、report.html、实验截图
-- .gitignore: Git忽略配置文件
-- README.md: 项目说明文档
+##   快速启动
+1. 安装Python依赖
+```bash
+pip install -r requirements.txt     
+2. M1/M2 离线数据分析，生成报告python analysis/analysis.py
+3. M3摄像头&语音模块：Live Server打开 web/index.html ，授予摄像头、麦克风权限
+4. M5 MQTT实时通信 mosquitto -c mosquitto.conf
+5. A1~A4 事件闭环演示，启动MQTT Broker后，启动后端服务 python app.py
 
-## 已实现功能
-1. M1模块：读取CSV文件，对温湿度数据进行校验，按统一规则计算状态status
-2. M2模块：对校验完成的数据做统计分析，生成趋势图trend.png与报告report.html
-3. M3模块：网页摄像头预览、Canvas抓拍快照保存；ASR语音识别+TTS语音朗读
-    - 支持语音指令：【拍照】、【朗读状态】
-    - 识别文字实时展示在页面日志；TTS朗读宿舍当前温湿度状态
-    - 增加异常捕获：麦克风拒绝、网络异常、环境错误时页面输出友好提示
-4. M4模块：CSV文件持久化存储温湿度数据
-5. M5模块：MQTT实时通信 + 三组故障模拟实验
-    - M5故障模拟实验：
-      ① 错误Topic测试：使用错误Topic发送报文，前端不更新对应宿舍面板；修正Topic后恢复
-      ② 非法JSON报文测试：发送残缺JSON字符串，MQTT收到消息，但前端JSON解析报错、页面不刷新；补齐JSON括号修复
-      ③ 停止Broker测试：关闭Mosquitto服务，MQTTX报ECONNREFUSED连接拒绝，通信中断；重启Broker恢复通信
+##   已知限制
+1. M1~M5、A1~A4模块已完成，其余预留模块暂未开发；
+​2. 离线分析仅支持本地CSV文件；
+​3. 语音识别依赖浏览器Web Speech API，仅localhost环境可用；
+​4. 同一时间仅开启单个Dashboard页面，多页面同时操作会产生重复事件日志；
+​5. 节点停止上报数据时，处置状态会保持「处理中」，不会自动超时判定。
 
-## 已知限制
-1. 当前已完成后端M1，M2，网页M3模块；M4、M5已完成；M6及其余模块暂未开发
-2. 目前仅支持本地CSV文件离线分析
-3. M3语音识别使用浏览器Web Speech API，依赖云端在线识别服务
-    - 必须localhost环境（Live Server）运行，直接双击html文件会禁用语音API
-    - 网络波动会导致识别间歇性失效；备选方案：可更换Whisper.js离线ASR

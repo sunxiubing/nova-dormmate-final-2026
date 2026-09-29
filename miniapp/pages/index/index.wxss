@@ -68,19 +68,26 @@
   text-align: center;
   margin-bottom: 30rpx;
 }
-.banner-normal { background: #e6f7ff; color: #1890ff; }
-.banner-warning { background: #fffbe6; color: #faad14; }
-.banner-danger { background: #fff1f0; color: #f5222d; }
+/* --- 状态色板：与 web/style.css 的变量表逐值对齐，两端截图放一起应当看不出差别 ---
+   偏冷 cold #2f7df6 ｜ 偏热 hot #dd4b32 ｜ 偏湿 wet #7c53e0 ｜ 正常 normal #12996b
+   原来是 banner-normal 蓝 / banner-warning 橙 / banner-danger 红，只有三档且对不上 web，
+   现在扩成四档按状态取色 */
+.banner-normal { background: #e3f6ee; color: #12996b; }
+.banner-cold   { background: #e6f0fe; color: #2f7df6; }
+.banner-hot    { background: #fdeae6; color: #dd4b32; }
+.banner-wet    { background: #efe9fd; color: #7c53e0; }
 
 .mini-cards { display: flex; gap: 20rpx; margin-bottom: 30rpx; }
 .mini-card { flex: 1; background: #f8f9fa; padding: 20rpx; border-radius: 12rpx; }
 .mini-label { font-size: 24rpx; color: #666; display: block; }
 .mini-value { font-size: 40rpx; font-weight: bold; color: #333; display: block; margin: 10rpx 0; }
 .mini-tag { display: inline-block; padding: 4rpx 16rpx; border-radius: 6rpx; font-size: 22rpx; }
-.tag-normal { background: #e6f7ff; color: #1890ff; }
-.tag-cold { background: #e6f7ff; color: #1890ff; }
-.tag-hot { background: #fff1f0; color: #f5222d; }
-.tag-warning { background: #fffbe6; color: #faad14; }
+/* 温度/湿度数值下方的状态标签。原来 tag-normal 和 tag-cold 都是同一个蓝，
+   正常与偏冷在视觉上分不开；现在正常独立成绿，偏湿从橙色改成 web 的紫 */
+.tag-normal { background: #e3f6ee; color: #12996b; }
+.tag-cold   { background: #e6f0fe; color: #2f7df6; }
+.tag-hot    { background: #fdeae6; color: #dd4b32; }
+.tag-wet    { background: #efe9fd; color: #7c53e0; }
 
 .suggestions-box { font-size: 26rpx; color: #555; margin-bottom: 20rpx; }
 .suggestion-title { font-size: 26rpx; font-weight: bold; display: block; margin-bottom: 10rpx; }
@@ -96,19 +103,24 @@
 .history-list { display: flex; flex-direction: column; gap: 16rpx; }
 .history-item { display: flex; background: #fff; border: 1px solid #f0f0f0; border-radius: 12rpx; padding: 20rpx; align-items: center; }
 .status-bar { width: 6rpx; height: 60rpx; border-radius: 4rpx; margin-right: 20rpx; }
-.status-bar.normal { background: #52c41a; }
-.status-bar.cold { background: #1890ff; }
-.status-bar.hot { background: #f5222d; }
+/* 原来只有三档，偏湿的记录拿不到任何一条规则，竖条完全不显示颜色 —— 这里补上 .wet */
+.status-bar.normal { background: #12996b; }
+.status-bar.cold   { background: #2f7df6; }
+.status-bar.hot    { background: #dd4b32; }
+.status-bar.wet    { background: #7c53e0; }
 
 .history-info { flex: 1; display: flex; flex-direction: column; }
-.history-top { display: flex; justify-content: space-between; margin-bottom: 10rpx; }
+/* 编号和时间紧挨着排（web 端 .history__item 的 gap:12px 同款距离）。
+   原来是 space-between，把 #1 顶到最左、时间顶到最右，中间空出一整行 */
+.history-top { display: flex; justify-content: flex-start; align-items: baseline; gap: 16rpx; margin-bottom: 10rpx; }
 .history-id { font-size: 24rpx; color: #999; }
 .history-time { font-size: 24rpx; color: #888; }
 .history-data { font-size: 28rpx; font-weight: 500; color: #333; }
 
 .history-tag { font-size: 24rpx; padding: 6rpx 20rpx; border-radius: 8rpx; }
-.history-tag.normal { background: #f6ffed; color: #52c41a; }
-.history-tag.cold { background: #e6f7ff; color: #1890ff; }
-.history-tag.hot { background: #fff1f0; color: #f5222d; }
+.history-tag.normal { background: #e3f6ee; color: #12996b; }
+.history-tag.cold   { background: #e6f0fe; color: #2f7df6; }
+.history-tag.hot    { background: #fdeae6; color: #dd4b32; }
+.history-tag.wet    { background: #efe9fd; color: #7c53e0; }
 
 .empty-state { text-align: center; font-size: 26rpx; color: #999; padding: 40rpx 0; }

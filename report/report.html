@@ -41,6 +41,17 @@
   .muted { color: var(--muted); font-size: 13.5px; }
   .skipped { margin: 0; padding-left: 20px; color: var(--muted); font-size: 13px; }
   img.trend { display: block; width: 100%; height: auto; border-radius: 10px; }
+  .episode { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;
+              margin-top: 14px; background: #fbfcfe; }
+  .episode h3 { margin: 0 0 4px; font-size: 14px; }
+  .episode .muted { margin: 0 0 8px; }
+  .tag { display: inline-block; margin-left: 6px; padding: 1px 9px; border-radius: 999px;
+          font-size: 12px; font-weight: 600; vertical-align: 1px; }
+  .tag--ok { background: #e2f6ee; color: var(--ok); }
+  .tag--warn { background: #fdeae6; color: var(--warn); }
+  .tag--pending { background: #fdeae6; color: var(--warn); }
+  .tag--idle { background: #eef1f8; color: var(--muted); }
+  td.nowrap { white-space: nowrap; color: var(--muted); }
   footer { margin-top: 26px; color: var(--muted); font-size: 12.5px; text-align: center; }
   code { background: #eef1f8; padding: 1px 6px; border-radius: 5px; font-size: 12.5px; }
 </style>
@@ -51,32 +62,32 @@
     <h1>DormMate 温湿度分析报告</h1>
     <p class="meta">
       数据源：<code>D:\DormMate-Final\data\dormmate.csv</code> ·
-      生成时间：2026-09-28 17:49:46 ·
+      生成时间：2026-09-29 19:41:19 ·
       规则：温度 &lt; 18 ℃ 偏冷，温度 ≥ 30 ℃ 偏热，湿度 ≥ 75 % 偏湿
     </p>
   </header>
 
   <h2>摘要</h2>
-  <div class="stats"><div class="stat"><span class="stat__label">总记录数</span><span class="stat__value">3 条</span><span class="stat__sub">数据源 dormmate.csv</span></div><div class="stat"><span class="stat__label">温度范围</span><span class="stat__value">11 ~ 60 ℃</span><span class="stat__sub">均值 27.7 ℃</span></div><div class="stat"><span class="stat__label">湿度范围</span><span class="stat__value">11 ~ 60 %</span><span class="stat__sub">均值 27.7 %</span></div><div class="stat"><span class="stat__label">异常记录</span><span class="stat__value">3 条</span><span class="stat__sub">占比 100.0%</span></div></div>
+  <div class="stats"><div class="stat"><span class="stat__label">总记录数</span><span class="stat__value">9 条</span><span class="stat__sub">数据源 dormmate.csv</span></div><div class="stat"><span class="stat__label">温度范围</span><span class="stat__value">23 ~ 56 ℃</span><span class="stat__sub">均值 41.3 ℃</span></div><div class="stat"><span class="stat__label">湿度范围</span><span class="stat__value">67 ~ 98 %</span><span class="stat__sub">均值 84.2 %</span></div><div class="stat"><span class="stat__label">异常记录</span><span class="stat__value">5 条</span><span class="stat__sub">占比 55.6%</span></div></div>
 
   <div class="cols" style="margin-top: 14px;">
     <div class="panel">
       <h2 style="margin-top:0">综合状态分布</h2>
       <table>
         <thead><tr><th>状态</th><th>数量</th><th>占比</th></tr></thead>
-        <tbody><tr><td class="warn">偏冷</td><td>2</td><td>66.7%</td></tr><tr><td class="warn">偏热</td><td>1</td><td>33.3%</td></tr></tbody>
+        <tbody><tr><td class="warn">偏热+偏湿</td><td>5</td><td>55.6%</td></tr><tr><td>正常</td><td>4</td><td>44.4%</td></tr></tbody>
       </table>
     </div>
     <div class="panel">
       <h2 style="margin-top:0">温度状态分布</h2>
       <table>
         <thead><tr><th>状态</th><th>数量</th><th>占比</th></tr></thead>
-        <tbody><tr><td class="warn">偏冷</td><td>2</td><td>66.7%</td></tr><tr><td class="warn">偏热</td><td>1</td><td>33.3%</td></tr></tbody>
+        <tbody><tr><td class="warn">偏热</td><td>5</td><td>55.6%</td></tr><tr><td>正常</td><td>4</td><td>44.4%</td></tr></tbody>
       </table>
       <h2>湿度状态分布</h2>
       <table>
         <thead><tr><th>状态</th><th>数量</th><th>占比</th></tr></thead>
-        <tbody><tr><td>正常</td><td>3</td><td>100.0%</td></tr></tbody>
+        <tbody><tr><td class="warn">偏湿</td><td>5</td><td>55.6%</td></tr><tr><td>正常</td><td>4</td><td>44.4%</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -85,7 +96,7 @@
   <div class="panel">
       <table>
         <thead><tr><th>时间</th><th>温度 (℃)</th><th>湿度 (%)</th><th>状态</th></tr></thead>
-        <tbody><tr><td>2026-09-28 14:02:35</td><td>11</td><td>11</td><td class="warn">偏冷</td></tr><tr><td>2026-09-28 14:02:41</td><td>12</td><td>12</td><td class="warn">偏冷</td></tr><tr><td>2026-09-28 14:02:49</td><td>60</td><td>60</td><td class="warn">偏热</td></tr></tbody>
+        <tbody><tr><td>2026-09-29 00:56:21</td><td>56</td><td>98</td><td class="warn">偏热+偏湿</td></tr><tr><td>2026-09-29 00:56:32</td><td>56</td><td>98</td><td class="warn">偏热+偏湿</td></tr><tr><td>2026-09-29 00:57:02</td><td>56</td><td>98</td><td class="warn">偏热+偏湿</td></tr><tr><td>2026-09-29 00:57:24</td><td>56</td><td>98</td><td class="warn">偏热+偏湿</td></tr><tr><td>2026-09-29 01:05:04</td><td>56</td><td>98</td><td class="warn">偏热+偏湿</td></tr></tbody>
       </table></div>
 
   <h2>趋势图</h2>
@@ -93,7 +104,33 @@
     <img class="trend" src="trend.png" alt="温湿度趋势图" />
   </div>
 
-  <footer>由 analysis/analysis.py 自动生成 · 共 3 条有效记录</footer>
+  <h2>事件复盘</h2>
+  <div class="panel">
+    <p class="muted">共 74 条事件记录，归为 2 段异常事件，
+    其中已得出结论 2 段。每段从异常开始、优先处理理由、用户处置、后续数据变化
+    到最终结果，按时间顺序完整回看。</p>
+
+      <div class="episode">
+        <h3>dorm-a · 2026-09-29 19:09:17
+          <span class="tag tag--warn">仍需关注</span></h3>
+        <p class="muted">事件 13 条 · 处置后数据变化 2 条 · 跨度 6 分钟</p>
+        <table>
+          <thead><tr><th>时间</th><th>事件</th><th>异常类型</th><th>操作</th><th>详情</th></tr></thead>
+          <tbody><tr><td class="nowrap">2026-09-29 19:09:17</td><td>异常开始</td><td>持续高温时间较长</td><td class="muted">—</td><td>触发读数 53 ℃ / 57 %，判定「偏热」</td></tr><tr><td class="nowrap">2026-09-29 19:09:17</td><td>异常开始</td><td>持续高温时间较长</td><td class="muted">—</td><td>触发读数 53 ℃ / 57 %，判定「偏热」</td></tr><tr><td class="nowrap">2026-09-29 19:09:17</td><td>数据变化</td><td>持续高温时间较长</td><td class="muted">—</td><td>第 1 条　53 ℃　57 %　「偏热」</td></tr><tr><td class="nowrap">2026-09-29 19:09:17</td><td>数据变化</td><td>持续高温时间较长</td><td class="muted">—</td><td>第 1 条　53 ℃　57 %　「偏热」</td></tr><tr><td class="nowrap">2026-09-29 19:09:17</td><td>最终结果</td><td class="muted">—</td><td>系统自动判定</td><td>仍需关注（处置后仍有异常报文，系统自动判定）</td></tr><tr><td class="nowrap">2026-09-29 19:09:17</td><td>最终结果</td><td class="muted">—</td><td>系统自动判定</td><td>仍需关注（处置后仍有异常报文，系统自动判定）</td></tr><tr><td class="nowrap">2026-09-29 19:09:35</td><td>处置操作</td><td>持续高温时间较长</td><td>开启风扇</td><td>开启风扇 · 当前：风扇已开启</td></tr><tr><td class="nowrap">2026-09-29 19:09:35</td><td>处置操作</td><td>持续高温时间较长</td><td>开启风扇 · 外部指令</td><td>开启风扇 · 当前：风扇已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:15:53</td><td>优先处理理由</td><td>持续高温时间较长</td><td class="muted">—</td><td>原因：唯一异常宿舍（已持续 6 分钟 · 异常报文 1 条）</td></tr><tr><td class="nowrap">2026-09-29 19:15:53</td><td>优先处理理由</td><td>持续高温时间较长</td><td class="muted">—</td><td>原因：唯一异常宿舍（已持续 6 分钟 · 异常报文 1 条）</td></tr><tr><td class="nowrap">2026-09-29 19:15:53</td><td>优先处理理由</td><td>持续高温时间较长</td><td class="muted">—</td><td>原因：唯一异常宿舍（已持续 6 分钟 · 异常报文 1 条）</td></tr><tr><td class="nowrap">2026-09-29 19:15:53</td><td>优先处理理由</td><td>持续高温时间较长</td><td class="muted">—</td><td>原因：唯一异常宿舍（已持续 6 分钟 · 异常报文 1 条）</td></tr><tr><td class="nowrap">2026-09-29 19:15:53</td><td>优先处理理由</td><td>持续高温时间较长</td><td class="muted">—</td><td>原因：唯一异常宿舍（已持续 6 分钟 · 异常报文 1 条）</td></tr></tbody>
+        </table>
+      </div>
+      <div class="episode">
+        <h3>dorm-b · 2026-09-29 19:11:29
+          <span class="tag tag--ok">已恢复</span></h3>
+        <p class="muted">事件 61 条 · 处置后数据变化 13 条 · 跨度 4 分钟</p>
+        <table>
+          <thead><tr><th>时间</th><th>事件</th><th>异常类型</th><th>操作</th><th>详情</th></tr></thead>
+          <tbody><tr><td class="nowrap">2026-09-29 19:11:29</td><td>数据变化</td><td>持续高温偏湿时间较长</td><td class="muted">—</td><td>第 1 条　53 ℃　87 %　「偏热+偏湿」</td></tr><tr><td class="nowrap">2026-09-29 19:11:29</td><td>数据变化</td><td>持续高温偏湿时间较长</td><td class="muted">—</td><td>第 1 条　53 ℃　87 %　「偏热+偏湿」</td></tr><tr><td class="nowrap">2026-09-29 19:11:29</td><td>数据变化</td><td>持续高温偏湿时间较长</td><td class="muted">—</td><td>第 1 条　53 ℃　87 %　「偏热+偏湿」</td></tr><tr><td class="nowrap">2026-09-29 19:11:29</td><td>最终结果</td><td class="muted">—</td><td>系统自动判定</td><td>仍需关注（处置后仍有异常报文，系统自动判定）</td></tr><tr><td class="nowrap">2026-09-29 19:11:29</td><td>最终结果</td><td class="muted">—</td><td>系统自动判定</td><td>仍需关注（处置后仍有异常报文，系统自动判定）</td></tr><tr><td class="nowrap">2026-09-29 19:11:29</td><td>最终结果</td><td class="muted">—</td><td>系统自动判定</td><td>仍需关注（处置后仍有异常报文，系统自动判定）</td></tr><tr><td class="nowrap">2026-09-29 19:11:37</td><td>处置操作</td><td>持续高温偏湿时间较长</td><td>开启除湿机</td><td>开启除湿机 · 当前：除湿机已开启</td></tr><tr><td class="nowrap">2026-09-29 19:11:37</td><td>处置操作</td><td>持续高温偏湿时间较长</td><td>开启除湿机 · 外部指令</td><td>开启除湿机 · 当前：除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:11:37</td><td>处置操作</td><td>持续高温偏湿时间较长</td><td>开启除湿机 · 外部指令</td><td>开启除湿机 · 当前：除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:11:39</td><td>处置操作</td><td>持续高温偏湿时间较长</td><td>开启风扇</td><td>开启风扇 · 当前：风扇已开启、除湿机已开启</td></tr><tr><td class="nowrap">2026-09-29 19:11:39</td><td>处置操作</td><td>持续高温偏湿时间较长</td><td>开启风扇 · 外部指令</td><td>开启风扇 · 当前：风扇已开启、除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:11:39</td><td>处置操作</td><td>持续高温偏湿时间较长</td><td>开启风扇 · 外部指令</td><td>开启风扇 · 当前：风扇已开启、除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:11:40</td><td>处置操作</td><td>持续高温偏湿时间较长</td><td>关闭风扇</td><td>关闭风扇 · 当前：除湿机已开启</td></tr><tr><td class="nowrap">2026-09-29 19:11:40</td><td>处置操作</td><td>持续高温偏湿时间较长</td><td>关闭风扇 · 外部指令</td><td>关闭风扇 · 当前：除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:11:40</td><td>处置操作</td><td>持续高温偏湿时间较长</td><td>关闭风扇 · 外部指令</td><td>关闭风扇 · 当前：除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:11:58</td><td>处置操作</td><td>持续高温偏湿时间较长</td><td>关闭风扇</td><td>关闭风扇 · 当前：除湿机已开启</td></tr><tr><td class="nowrap">2026-09-29 19:11:58</td><td>处置操作</td><td>持续高温偏湿时间较长</td><td>关闭风扇 · 外部指令</td><td>关闭风扇 · 当前：除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:11:58</td><td>处置操作</td><td>持续高温偏湿时间较长</td><td>关闭风扇 · 外部指令</td><td>关闭风扇 · 当前：除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:11:58</td><td>处置操作</td><td>持续高温偏湿时间较长</td><td>关闭风扇 · 外部指令</td><td>关闭风扇 · 当前：除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:11:58</td><td>处置操作</td><td>持续高温偏湿时间较长</td><td>关闭风扇</td><td>关闭风扇 · 当前：除湿机已开启</td></tr><tr><td class="nowrap">2026-09-29 19:11:58</td><td>处置操作</td><td>持续高温偏湿时间较长</td><td>关闭风扇 · 外部指令</td><td>关闭风扇 · 当前：除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:11:58</td><td>处置操作</td><td>持续高温偏湿时间较长</td><td>关闭风扇 · 外部指令</td><td>关闭风扇 · 当前：除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:11:58</td><td>处置操作</td><td>持续高温偏湿时间较长</td><td>关闭风扇 · 外部指令</td><td>关闭风扇 · 当前：除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:12:26</td><td>数据变化</td><td>持续高湿时间较长</td><td class="muted">—</td><td>第 1 条　23 ℃　87 %　「偏湿」</td></tr><tr><td class="nowrap">2026-09-29 19:12:26</td><td>数据变化</td><td>持续高湿时间较长</td><td class="muted">—</td><td>第 1 条　23 ℃　87 %　「偏湿」</td></tr><tr><td class="nowrap">2026-09-29 19:12:26</td><td>数据变化</td><td>持续高湿时间较长</td><td class="muted">—</td><td>第 1 条　23 ℃　87 %　「偏湿」</td></tr><tr><td class="nowrap">2026-09-29 19:12:26</td><td>数据变化</td><td>持续高湿时间较长</td><td class="muted">—</td><td>第 1 条　23 ℃　87 %　「偏湿」</td></tr><tr><td class="nowrap">2026-09-29 19:12:26</td><td>最终结果</td><td class="muted">—</td><td>系统自动判定</td><td>仍需关注（处置后仍有异常报文，系统自动判定）</td></tr><tr><td class="nowrap">2026-09-29 19:12:26</td><td>最终结果</td><td class="muted">—</td><td>系统自动判定</td><td>仍需关注（处置后仍有异常报文，系统自动判定）</td></tr><tr><td class="nowrap">2026-09-29 19:12:26</td><td>最终结果</td><td class="muted">—</td><td>系统自动判定</td><td>仍需关注（处置后仍有异常报文，系统自动判定）</td></tr><tr><td class="nowrap">2026-09-29 19:12:26</td><td>最终结果</td><td class="muted">—</td><td>系统自动判定</td><td>仍需关注（处置后仍有异常报文，系统自动判定）</td></tr><tr><td class="nowrap">2026-09-29 19:12:26</td><td>最终结果</td><td class="muted">—</td><td>系统自动判定</td><td>仍需关注（处置后仍有异常报文，系统自动判定）</td></tr><tr><td class="nowrap">2026-09-29 19:12:33</td><td>处置操作</td><td>持续高湿时间较长</td><td>开启风扇</td><td>开启风扇 · 当前：风扇已开启、除湿机已开启</td></tr><tr><td class="nowrap">2026-09-29 19:12:33</td><td>处置操作</td><td>持续高湿时间较长</td><td>开启风扇 · 外部指令</td><td>开启风扇 · 当前：风扇已开启、除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:12:33</td><td>处置操作</td><td>持续高湿时间较长</td><td>开启风扇 · 外部指令</td><td>开启风扇 · 当前：风扇已开启、除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:12:33</td><td>处置操作</td><td>持续高湿时间较长</td><td>开启风扇 · 外部指令</td><td>开启风扇 · 当前：风扇已开启、除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:12:33</td><td>处置操作</td><td>持续高湿时间较长</td><td>开启风扇 · 外部指令</td><td>开启风扇 · 当前：风扇已开启、除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:12:34</td><td>处置操作</td><td>持续高湿时间较长</td><td>关闭风扇</td><td>关闭风扇 · 当前：除湿机已开启</td></tr><tr><td class="nowrap">2026-09-29 19:12:34</td><td>处置操作</td><td>持续高湿时间较长</td><td>关闭风扇 · 外部指令</td><td>关闭风扇 · 当前：除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:12:34</td><td>处置操作</td><td>持续高湿时间较长</td><td>关闭风扇 · 外部指令</td><td>关闭风扇 · 当前：除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:12:34</td><td>处置操作</td><td>持续高湿时间较长</td><td>关闭风扇 · 外部指令</td><td>关闭风扇 · 当前：除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:12:34</td><td>处置操作</td><td>持续高湿时间较长</td><td>关闭风扇 · 外部指令</td><td>关闭风扇 · 当前：除湿机已开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:15:53</td><td>数据变化</td><td class="muted">—</td><td class="muted">—</td><td>第 1 条　23 ℃　57 %　「正常」</td></tr><tr><td class="nowrap">2026-09-29 19:15:53</td><td>数据变化</td><td class="muted">—</td><td class="muted">—</td><td>第 1 条　23 ℃　57 %　「正常」</td></tr><tr><td class="nowrap">2026-09-29 19:15:53</td><td>数据变化</td><td class="muted">—</td><td class="muted">—</td><td>第 1 条　23 ℃　57 %　「正常」</td></tr><tr><td class="nowrap">2026-09-29 19:15:53</td><td>数据变化</td><td class="muted">—</td><td class="muted">—</td><td>第 1 条　23 ℃　57 %　「正常」</td></tr><tr><td class="nowrap">2026-09-29 19:15:53</td><td>数据变化</td><td class="muted">—</td><td class="muted">—</td><td>第 1 条　23 ℃　57 %　「正常」</td></tr><tr><td class="nowrap">2026-09-29 19:15:53</td><td>数据变化</td><td class="muted">—</td><td class="muted">—</td><td>第 1 条　23 ℃　57 %　「正常」</td></tr><tr><td class="nowrap">2026-09-29 19:15:53</td><td>最终结果</td><td class="muted">—</td><td>系统自动判定</td><td>已恢复（处置后连续 1 组报文均正常，系统自动判定）</td></tr><tr><td class="nowrap">2026-09-29 19:15:53</td><td>最终结果</td><td class="muted">—</td><td>系统自动判定</td><td>已恢复（处置后连续 1 组报文均正常，系统自动判定）</td></tr><tr><td class="nowrap">2026-09-29 19:15:53</td><td>最终结果</td><td class="muted">—</td><td>系统自动判定</td><td>已恢复（处置后连续 1 组报文均正常，系统自动判定）</td></tr><tr><td class="nowrap">2026-09-29 19:15:53</td><td>最终结果</td><td class="muted">—</td><td>系统自动判定</td><td>已恢复（处置后连续 1 组报文均正常，系统自动判定）</td></tr><tr><td class="nowrap">2026-09-29 19:15:53</td><td>最终结果</td><td class="muted">—</td><td>系统自动判定</td><td>已恢复（处置后连续 1 组报文均正常，系统自动判定）</td></tr><tr><td class="nowrap">2026-09-29 19:15:53</td><td>最终结果</td><td class="muted">—</td><td>系统自动判定</td><td>已恢复（处置后连续 1 组报文均正常，系统自动判定）</td></tr><tr><td class="nowrap">2026-09-29 19:16:54</td><td>处置操作</td><td class="muted">—</td><td>关闭除湿机</td><td>关闭除湿机 · 当前：设备均未开启</td></tr><tr><td class="nowrap">2026-09-29 19:16:54</td><td>处置操作</td><td class="muted">—</td><td>关闭除湿机 · 外部指令</td><td>关闭除湿机 · 当前：设备均未开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:16:54</td><td>处置操作</td><td class="muted">—</td><td>关闭除湿机 · 外部指令</td><td>关闭除湿机 · 当前：设备均未开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:16:54</td><td>处置操作</td><td class="muted">—</td><td>关闭除湿机 · 外部指令</td><td>关闭除湿机 · 当前：设备均未开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:16:54</td><td>处置操作</td><td class="muted">—</td><td>关闭除湿机 · 外部指令</td><td>关闭除湿机 · 当前：设备均未开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:16:54</td><td>处置操作</td><td class="muted">—</td><td>关闭除湿机 · 外部指令</td><td>关闭除湿机 · 当前：设备均未开启 · 外部指令</td></tr><tr><td class="nowrap">2026-09-29 19:16:54</td><td>处置操作</td><td class="muted">—</td><td>关闭除湿机 · 外部指令</td><td>关闭除湿机 · 当前：设备均未开启 · 外部指令</td></tr></tbody>
+        </table>
+      </div>
+  </div>
+
+  <footer>由 analysis/analysis.py 自动生成 · 共 9 条有效记录</footer>
 </div>
 </body>
 </html>

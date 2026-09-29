@@ -9,6 +9,10 @@
     python analysis/analysis.py                    # 自动查找 dormmate.csv
     python analysis/analysis.py --csv 路径.csv      # 指定 CSV
     python analysis/analysis.py --csv 新数据.csv     # 换数据一键重生成报告
+
+A4 事件复盘：报告里的【事件复盘】板块读的是事件日志（默认 --csv 同目录的
+events.csv，由 app.py 的 /api/eventLog 写入）。没有这个文件时板块显示
+「暂无事件」，不影响正常报告生成。
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ from __future__ import annotations
 import argparse
 import csv
 import html
+import json
 import math
 import re
 import sys
@@ -41,6 +46,40 @@ HUMIDITY_MIN, HUMIDITY_MAX = 0.0, 100.0
 
 CSV_NAME = "dormmate.csv"
 REQUIRED_COLUMNS = ("time", "temperature", "humidity", "status")
+
+# A1~A4 事件日志。列定义在 app.py 的 EVENT_HEADER，这里按列名取用，不做校验：
+# 事件日志坏了也不该拖垮整份报告，缺列的行会走到「未归组事件」区照原样列出来
+EVENT_CSV_NAME = "events.csv"
+
+# 事件类型的中文标签，报告里直接引用，文案只此一份
+EVENT_TYPE_LABELS = {
+    "anomaly_start": "异常开始",
+    "priority": "优先处理理由",
+    "action": "处置操作",
+    "reading": "数据变化",
+    "verdict": "最终结果",
+}
+
+# A1 的三条优先级规则在报告里的说法。逐字照抄 a1/priority.js 的 REASON_TEXT：
+# 同一件事在页面和报告里两种措辞，读的人得先做一次翻译才知道说的是同一条规则
+PRIORITY_REASON_LABELS = {
+    "only": "唯一异常宿舍",
+    "duration": "持续异常时间更长",
+    "count": "异常次数更多",
+    "order": "按宿舍编号顺序（时长与次数相同）",
+}
+
+VERDICT_LABELS = {
+    "recovered": "已恢复",
+    "attention": "仍需关注",
+    "natural": "自然恢复（未处置）",
+}
+STATE_PENDING = "未完结"
+
+# 设备的显示名。通风和灯已经不再有手动按钮（灯由模式控制），但旧日志里还有这两种操作 ——
+# 认不出设备名就只能把英文键名原样印出来，复盘读起来像在念代码
+DEVICE_LABELS = {"fan": "风扇", "dehumidifier": "除湿机", "light": "灯", "vent": "通风"}
+MODE_LABELS = {"study": "学习模式", "sleep": "睡眠模式", "away": "离寝模式"}
 
 TIME_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M")
 
@@ -237,6 +276,86 @@ def load_records(path: Path):
     return records, skipped
 
 
+# ---------------------------------------------------------------- 事件日志（A1~A4）
+def locate_events(explicit: str | None, csv_path: Path) -> Path:
+    """事件日志路径：显式指定优先，否则取 --csv 同目录的 events.csv。
+
+    这里刻意不做全局自动查找（和 locate_csv 不同）。事件日志和它要复盘的那份
+    数据必须来自同一次运行，顺手从别的目录抓一个 events.csv，会把两份互不相干的
+    时间线拼在一份报告里 —— 看起来更「全」，实际上是在编故事。
+    """
+    if explicit:
+        return Path(explicit).expanduser()
+    return csv_path.parent / EVENT_CSV_NAME
+
+
+def load_events(path: Path):
+    """读取 A1~A4 事件日志，返回按时间排好序的事件列表。
+
+    文件不存在直接返回 []：还没跑过处置闭环不是错误，报告照常生成。
+
+    按列位置读，不看表头里写了什么名字。事件日志升到 6 列之后，表头是唯一还
+    停在旧版本的东西 —— app.py 只在文件不存在时写表头，所以升级前就存在的
+    日志会一直顶着那行 4 列的老表头，后面追加的全是 6 列的行。照名字取字段的话，
+    这些新行会整体错位：detail 那一格拿到的是 alert，op_text 落进多出来的列被丢掉。
+
+    detail 解析失败的行不丢、不报错，原样挂到 detail_raw 上。复盘报告的全部价值
+    就在「这段时间到底发生了什么」，静默丢掉一行等于篡改时间线 —— 宁可显示一行
+    看不懂的原始文本，也不能让一份不完整的时间线冒充完整。
+    """
+    if not path.is_file():
+        return []
+
+    events = []
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.reader(handle)
+        next(reader, None)  # 表头：名字可能是旧的，位置才是真的
+
+        for line_no, row in enumerate(reader, start=2):
+            cells = [cell.strip() for cell in row]
+            if len(cells) >= 6:
+                raw_time, node, event_type, alert, op_text, raw_detail = cells[:6]
+            else:
+                # 老版本（4 列）的行：time,node,event_type,detail。那一版还没有
+                # alert / op_text 两列，第 4 格装的是 detail 本身 —— 按新列序硬读，
+                # 这批历史事件的 JSON 会顶到「异常类型」那一格，详情反倒空掉
+                raw_time, node, event_type, raw_detail = (cells + [""] * 4)[:4]
+                alert = op_text = ""
+
+            if not (raw_time or node or event_type or alert or op_text or raw_detail):
+                continue  # 空行
+
+            detail = None
+            try:
+                parsed = json.loads(raw_detail)
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, dict):
+                detail = parsed
+
+            events.append(
+                {
+                    "line": line_no,
+                    "time": parse_time(raw_time),
+                    "time_text": raw_time or "（无时间）",
+                    "node": node or "（未知宿舍）",
+                    "event_type": event_type,
+                    "label": EVENT_TYPE_LABELS.get(event_type, event_type or "未知事件"),
+                    # 人读的两列：异常类型、用户操作。4 列的老日志里没有这两列，
+                    # 是空串 —— 缺列不该让一个文件读不出来，只是那几行少两格信息
+                    "alert": alert,
+                    "op_text": op_text,
+                    "detail": detail,
+                    "detail_raw": "" if detail is not None else raw_detail,
+                }
+            )
+
+    # 稳定排序：时间解析不出来的行沉到最后（组内保持文件顺序）。
+    # 报告是照着时间线读的，顺序错了整段复盘就没有意义。
+    events.sort(key=lambda e: (e["time"] is None, e["time"] or datetime.min))
+    return events
+
+
 # ---------------------------------------------------------------- 统计分析
 def compute_stats(records):
     temps = [r["temperature"] for r in records]
@@ -358,8 +477,270 @@ def draw_trend(records, stats, out_path: Path):
     plt.close(fig)
 
 
+# ---------------------------------------------------------------- 事件复盘
+def event_detail_text(event) -> str:
+    """把一条事件的对象 detail 翻译成一句人话。
+
+    解读不了的类型不猜文案，退回原始 JSON —— 猜错比不显示更糟，复盘报告里
+    一句看着像那么回事、其实张冠李戴的描述，会被当成事实读下去。
+    """
+    detail = event["detail"]
+    if detail is None:
+        text = event["detail_raw"]
+        return f"无法解析：{text}" if text else "（无 detail）"
+
+    kind = event["event_type"]
+
+    if kind == "anomaly_start":
+        parts = []
+        if "temp" in detail:
+            parts.append(f"{detail['temp']:g} ℃")
+        if "hum" in detail:
+            parts.append(f"{detail['hum']:g} %")
+        head = "触发读数 " + " / ".join(parts) if parts else "触发读数未知"
+        if detail.get("status"):
+            head += f"，判定「{detail['status']}」"
+        return head
+
+    if kind == "priority":
+        reason = detail.get("reason")
+        text = "原因：" + PRIORITY_REASON_LABELS.get(reason, str(reason or "未知"))
+        extra = []
+        if isinstance(detail.get("durationMs"), (int, float)):
+            # 数字前留空格（「已持续 7 分钟」），中文短语前不留（「已持续不足 1 分钟」）
+            span = duration_text(detail["durationMs"])
+            extra.append("已持续" + (" " + span if span[0].isdigit() else span))
+        if isinstance(detail.get("count"), int):
+            extra.append(f"异常报文 {detail['count']} 条")
+        if extra:
+            text += "（" + " · ".join(extra) + "）"
+        return text
+
+    if kind == "action":
+        if detail.get("mode"):
+            action = "切换到" + MODE_LABELS.get(detail["mode"], str(detail["mode"]))
+        elif detail.get("op") in DEVICE_LABELS:
+            on = (detail.get("devices") or {}).get(detail["op"])
+            action = f"{'开启' if on else '关闭'}{DEVICE_LABELS[detail['op']]}"
+        elif detail.get("op"):
+            action = str(detail["op"])
+        else:
+            action = "设备操作"
+        devices = devices_text(detail.get("devices"))
+        text = f"{action} · 当前：{devices}"
+        if detail.get("src") == "external":
+            text += " · 外部指令"
+        return text
+
+    if kind == "reading":
+        bits = []
+        if isinstance(detail.get("seq"), int):
+            bits.append(f"第 {detail['seq']} 条")
+        if "temp" in detail:
+            bits.append(f"{detail['temp']:g} ℃")
+        if "hum" in detail:
+            bits.append(f"{detail['hum']:g} %")
+        if detail.get("status"):
+            bits.append(f"「{detail['status']}」")
+        return "　".join(bits) if bits else "一条新报文"
+
+    if kind == "verdict":
+        result = detail.get("result")
+        count = detail.get("readings")
+        if result == "recovered":
+            suffix = f"处置后连续 {count} 组报文均正常" if isinstance(count, int) and count else "处置后报文均正常"
+            return f"已恢复（{suffix}，系统自动判定）"
+        if result == "attention":
+            return "仍需关注（处置后仍有异常报文，系统自动判定）"
+        if result == "natural":
+            return "自然恢复（异常自行结束，用户未做处置）"
+        return VERDICT_LABELS.get(result, str(result or "未知结论"))
+
+    return json.dumps(detail, ensure_ascii=False)
+
+
+def duration_text(ms) -> str:
+    """毫秒 → 「7 分钟」这种粗粒度说法：复盘读的是量级，不是毫秒。"""
+    total_min = int(ms) // 60000
+    if total_min < 1:
+        return "不足 1 分钟"
+    if total_min < 60:
+        return f"{total_min} 分钟"
+    hours, minutes = divmod(total_min, 60)
+    return f"{hours} 小时 {minutes} 分钟" if minutes else f"{hours} 小时"
+
+
+def devices_text(devices) -> str:
+    if not isinstance(devices, dict):
+        return "设备状态未知"
+    # 措辞与 Dashboard 的状态章（opsSummary）保持一致，同一件事两种说法容易让人以为不是一个状态
+    on = [DEVICE_LABELS[k] + "已开启"
+          for k in ("fan", "dehumidifier", "light", "vent") if devices.get(k)]
+    if not on:
+        return "设备均未开启"
+    return "、".join(on)
+
+
+def group_episodes(events):
+    """按 (宿舍, eid) 把事件归成一个个 episode，返回 (episodes, ungrouped)。
+
+    eid 是异常段起始毫秒，同一段的所有事件共用，多宿舍交错也不会串组。
+    没有 eid 的行（手改过的、detail 坏掉的）按同宿舍 episode 的时间区间就近归组；
+    仍然归不进去的进 ungrouped，由调用方单列一区显示 —— 任何一行都不静默消失。
+    """
+    episodes, orphans = {}, []
+
+    for event in events:
+        detail = event["detail"] or {}
+        eid = detail.get("eid")
+        # bool 是 int 的子类，真值判断会把它当数字用，显式排掉
+        if isinstance(eid, bool) or not isinstance(eid, (int, float)):
+            orphans.append(event)
+            continue
+        episodes.setdefault((event["node"], eid), []).append(event)
+
+    grouped = {}
+    for key, items in episodes.items():
+        times = [e["time"] for e in items if e["time"] is not None]
+        grouped[key] = {
+            "node": key[0],
+            "eid": key[1],
+            "events": items,
+            "start": min(times) if times else None,
+            "end": max(times) if times else None,
+        }
+
+    ungrouped = []
+    for event in orphans:
+        best_key, best_dist = None, None
+        for key, ep in grouped.items():
+            if key[0] != event["node"] or event["time"] is None:
+                continue
+            lo, hi = ep["start"] or ep["end"], ep["end"] or ep["start"]
+            if lo is None or hi is None:
+                continue
+            dist = timedelta(0) if lo <= event["time"] <= hi else min(
+                abs(event["time"] - lo), abs(event["time"] - hi)
+            )
+            if best_dist is None or dist < best_dist or (dist == best_dist and key[1] < best_key[1]):
+                best_key, best_dist = key, dist
+        if best_key is None:
+            ungrouped.append(event)
+        else:
+            grouped[best_key]["events"].append(event)
+
+    ordered = sorted(
+        grouped.values(),
+        key=lambda ep: (ep["start"] is None, ep["start"] or datetime.min, ep["node"], ep["eid"]),
+    )
+    for ep in ordered:
+        ep["events"].sort(key=lambda e: (e["time"] is None, e["time"] or datetime.min))
+    return ordered, ungrouped
+
+
+def episode_state(ep):
+    """episode 的终态 = 该 episode 最后一条 verdict；没有就是未完结。"""
+    verdicts = [e for e in ep["events"] if e["event_type"] == "verdict"]
+    if not verdicts:
+        return STATE_PENDING, "pending"
+    result = (verdicts[-1]["detail"] or {}).get("result")
+    if result == "recovered":
+        return VERDICT_LABELS["recovered"], "ok"
+    if result == "attention":
+        return VERDICT_LABELS["attention"], "warn"
+    if result == "natural":
+        return VERDICT_LABELS["natural"], "idle"
+    return STATE_PENDING, "pending"
+
+
+def render_events_section(events) -> str:
+    """A4：【事件复盘】板块。支持回看 —— 一次问题一条时间线，从上往下就是全过程。"""
+    esc = html.escape
+
+    if not events:
+        return """
+  <h2>事件复盘</h2>
+  <div class="panel"><p class="muted">暂无事件。在 Dashboard 上跑完一次「发现 → 处置 → 验证」
+  闭环后重新生成报告，这里会按宿舍逐条列出整段事件时间线。</p></div>"""
+
+    episodes, ungrouped = group_episodes(events)
+
+    def cell(value):
+        """异常类型 / 操作两格。没内容时显示一个「—」而不是空白：
+        空白看着像是这一列没渲染出来，一个占位符才说明「这一条确实没有这一项」。"""
+        return f"<td>{esc(value)}</td>" if value else '<td class="muted">—</td>'
+
+    def event_rows(items):
+        rows = []
+        for e in items:
+            rows.append(
+                "<tr>"
+                f"<td class=\"nowrap\">{esc(e['time_text'])}</td>"
+                f"<td>{esc(e['label'])}</td>"
+                f"{cell(e['alert'])}"
+                f"{cell(e['op_text'])}"
+                f"<td>{esc(event_detail_text(e))}</td>"
+                "</tr>"
+            )
+        return "".join(rows)
+
+    blocks = []
+    for ep in episodes:
+        state, cls = episode_state(ep)
+        span = ""
+        if ep["start"] and ep["end"] and ep["end"] > ep["start"]:
+            span = f" · 跨度 {duration_text((ep['end'] - ep['start']).total_seconds() * 1000)}"
+        count = sum(1 for e in ep["events"] if e["event_type"] == "reading")
+        blocks.append(f"""
+      <div class="episode">
+        <h3>{esc(ep['node'])} · {esc(ep['start'].strftime('%Y-%m-%d %H:%M:%S') if ep['start'] else '时间未知')}
+          <span class="tag tag--{cls}">{esc(state)}</span></h3>
+        <p class="muted">事件 {len(ep['events'])} 条 · 处置后数据变化 {count} 条{esc(span)}</p>
+        <table>
+          <thead><tr><th>时间</th><th>事件</th><th>异常类型</th><th>操作</th><th>详情</th></tr></thead>
+          <tbody>{event_rows(ep['events'])}</tbody>
+        </table>
+      </div>""")
+
+    if ungrouped:
+        # 单独攒出这些行再拼进 f-string：把 "".join(...) 直接写进 f-string 的表达式里，
+        # 那串嵌套引号在 Python 3.12 之前是语法错误（PEP 701 才放开）。
+        # 报告是给人看的交付物，不该依赖某个小版本的解释器才打得开
+        un_rows = "".join(
+            "<tr>"
+            f"<td class=\"nowrap\">{esc(e['time_text'])}</td>"
+            f"<td>{esc(e['node'])}</td>"
+            f"<td>{esc(e['label'])}</td>"
+            f"{cell(e['alert'])}"
+            f"{cell(e['op_text'])}"
+            f"<td>{esc(event_detail_text(e))}</td>"
+            "</tr>"
+            for e in ungrouped
+        )
+        blocks.append(f"""
+      <div class="episode">
+        <h3>未归组事件（{len(ungrouped)} 条）<span class="tag tag--pending">无 eid</span></h3>
+        <p class="muted">这些行没有 episode 标识（detail 里缺 eid 或解析失败），
+        无法挂到上面任何一段异常上，原样列出以免漏掉：</p>
+        <table>
+          <thead><tr><th>时间</th><th>宿舍</th><th>事件</th><th>异常类型</th><th>操作</th><th>详情</th></tr></thead>
+          <tbody>{un_rows}</tbody>
+        </table>
+      </div>""")
+
+    settled = sum(1 for ep in episodes if episode_state(ep)[0] != STATE_PENDING)
+    return f"""
+  <h2>事件复盘</h2>
+  <div class="panel">
+    <p class="muted">共 {len(events)} 条事件记录，归为 {len(episodes)} 段异常事件，
+    其中已得出结论 {settled} 段。每段从异常开始、优先处理理由、用户处置、后续数据变化
+    到最终结果，按时间顺序完整回看。</p>
+{"".join(blocks)}
+  </div>"""
+
+
 # ---------------------------------------------------------------- 报告
-def render_report(records, stats, skipped, csv_path: Path, png_name: str) -> str:
+def render_report(records, stats, skipped, csv_path: Path, png_name: str, events=None) -> str:
     esc = html.escape
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -433,6 +814,8 @@ def render_report(records, stats, skipped, csv_path: Path, png_name: str) -> str
       <p class="muted">报告统计以规则重算结果为准：</p>
       <ul class="skipped">{items}</ul>"""
 
+    events_section = render_events_section(events or [])
+
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -476,6 +859,17 @@ def render_report(records, stats, skipped, csv_path: Path, png_name: str) -> str
   .muted {{ color: var(--muted); font-size: 13.5px; }}
   .skipped {{ margin: 0; padding-left: 20px; color: var(--muted); font-size: 13px; }}
   img.trend {{ display: block; width: 100%; height: auto; border-radius: 10px; }}
+  .episode {{ border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;
+              margin-top: 14px; background: #fbfcfe; }}
+  .episode h3 {{ margin: 0 0 4px; font-size: 14px; }}
+  .episode .muted {{ margin: 0 0 8px; }}
+  .tag {{ display: inline-block; margin-left: 6px; padding: 1px 9px; border-radius: 999px;
+          font-size: 12px; font-weight: 600; vertical-align: 1px; }}
+  .tag--ok {{ background: #e2f6ee; color: var(--ok); }}
+  .tag--warn {{ background: #fdeae6; color: var(--warn); }}
+  .tag--pending {{ background: #fdeae6; color: var(--warn); }}
+  .tag--idle {{ background: #eef1f8; color: var(--muted); }}
+  td.nowrap {{ white-space: nowrap; color: var(--muted); }}
   footer {{ margin-top: 26px; color: var(--muted); font-size: 12.5px; text-align: center; }}
   code {{ background: #eef1f8; padding: 1px 6px; border-radius: 5px; font-size: 12.5px; }}
 </style>
@@ -523,6 +917,7 @@ def render_report(records, stats, skipped, csv_path: Path, png_name: str) -> str
   <div class="panel">
     <img class="trend" src="{esc(png_name)}" alt="温湿度趋势图" />
   </div>
+{events_section}
 {skip_note}{mismatch_note}
   <footer>由 analysis/analysis.py 自动生成 · 共 {stats["count"]} 条有效记录</footer>
 </div>
@@ -554,6 +949,7 @@ def main(argv=None) -> int:
     parser.add_argument("--csv", help="CSV 文件路径，缺省时自动查找 dormmate.csv")
     parser.add_argument("--outdir", default=str(DEFAULT_OUTDIR),
                         help=f"报告输出目录，默认 {DEFAULT_OUTDIR}")
+    parser.add_argument("--events", help="A1~A4 事件日志 CSV，缺省为 --csv 同目录的 events.csv")
     args = parser.parse_args(argv)
 
     csv_path = locate_csv(args.csv)
@@ -568,6 +964,19 @@ def main(argv=None) -> int:
 
     records, skipped = load_records(csv_path)
     print(f"有效记录：{len(records)} 条" + (f"，跳过 {len(skipped)} 行" if skipped else ""))
+
+    # 事件日志缺失不算错误：没有文件 = 还没跑过处置闭环，报告照常出（复盘板块显示「暂无事件」）。
+    # 但显式传了 --events 却找不到，多半是路径写错了，得让人看见 —— 否则报告里那句
+    # 「暂无事件」会被当成「确实没发生过事件」，其实是拿错了路径。
+    events_path = locate_events(args.events, csv_path)
+    events = load_events(events_path)
+    if events_path.is_file():
+        print(f"事件日志：{len(events)} 条（{events_path.resolve()}）")
+    elif args.events:
+        print(f"[警告] 找不到事件日志：{events_path}，报告中的【事件复盘】将显示「暂无事件」。",
+              file=sys.stderr)
+    else:
+        print(f"事件日志：{events_path} 不存在，【事件复盘】显示「暂无事件」")
 
     if not records:
         print(f"[错误] {csv_path} 中没有可用的有效记录，已终止，未生成报告。", file=sys.stderr)
@@ -585,7 +994,7 @@ def main(argv=None) -> int:
 
     report_path = outdir / "report.html"
     report_path.write_text(
-        render_report(records, stats, skipped, csv_path, png_path.name),
+        render_report(records, stats, skipped, csv_path, png_path.name, events),
         encoding="utf-8",
     )
 

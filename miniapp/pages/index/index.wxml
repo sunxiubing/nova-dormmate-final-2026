@@ -41,21 +41,25 @@
       <view class="card">
         <text class="card-title">状态与建议</text>
         
-        <!-- 动态横幅 -->
-        <view class="status-banner">
-           {{currentStatus}}，建议按下方指引调整
+        <!-- 动态横幅：class 也跟着状态走，否则不论什么状态都是同一个底色。
+             文字直接用 analysisResult.bannerText —— 原来这里是 currentStatus，
+             而 currentStatus 只有「从服务端同步」那条路径才会写，手动分析时它一直是空的 -->
+        <view class="status-banner {{analysisResult.bannerClass}}">
+           {{analysisResult.bannerText}}
         </view>
 
-        <!-- 数据小卡片 -->
+        <!-- 数据小卡片：数值和它下面的标签必须同源。
+             原来数值取 currentTemp（只有同步历史时才写），标签取 analysisResult.tempStatus
+             （只有手动分析时才写），两者各写各的，会出现「数值是同步来的、标签是上次分析的」这种错配 -->
         <view class="mini-cards">
           <view class="mini-card">
             <text class="mini-label">温度</text>
-            <text class="mini-value">{{currentTemp}}</text>
+            <text class="mini-value">{{analysisResult.temp}}</text>
             <text class="mini-tag {{analysisResult.tempClass}}">{{analysisResult.tempStatus}}</text>
           </view>
           <view class="mini-card">
             <text class="mini-label">湿度</text>
-            <text class="mini-value">{{currentHumi}}</text>
+            <text class="mini-value">{{analysisResult.humi}}</text>
             <text class="mini-tag {{analysisResult.humiClass}}">{{analysisResult.humiStatus}}</text>
           </view>
         </view>
@@ -69,12 +73,12 @@
         <!-- 建议列表 -->
         <view class="suggestions-box">
           <text class="suggestion-title">改善建议</text>
-          <view class="suggestion-item" wx:for="{{currentSuggest}}" wx:key="*this">
+          <view class="suggestion-item" wx:for="{{analysisResult.suggestions}}" wx:key="*this">
             • {{item}}
           </view>
         </view>
 
-        <text class="analysis-time">分析时间：{{currentTime || '--'}}</text>
+        <text class="analysis-time">分析时间：{{analysisResult.time || '--'}}</text>
       </view>
 
     </view>
@@ -97,9 +101,11 @@
           
           <!-- 中间内容 -->
           <view class="history-info">
+            <!-- 编号靠左、完整时间靠右。时间是后端 CSV 的 time 列，格式 YYYY-MM-DD HH:mm:ss，
+                 和 web 端 formatTime 的输出完全一致；万一某行缺时间，兜底显示占位而不是留白 -->
             <view class="history-top">
               <text class="history-id">#{{item.id}}</text>
-              <text class="history-time">{{item.time}}</text>
+              <text class="history-time">{{item.time || '时间未知'}}</text>
             </view>
             <view class="history-bottom">
               <text class="history-data">温度 {{item.temp}} °C · 湿度 {{item.humi}} %</text>
