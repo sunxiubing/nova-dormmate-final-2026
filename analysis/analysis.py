@@ -17,6 +17,15 @@ events.csv，由 app.py 的 /api/eventLog 写入）。没有这个文件时板�
 B3 今日摘要：报告开头的【今日摘要】把事件日志里最新一天的内容整理成一段人话
 （谁出了问题、做了什么、结果怎样），同样只读事件日志 —— 摘要里的每一句都是
 按事件数据现算的，没有写死的文案，换一份事件日志跑一次就整段变。
+
+C1/C2 机器学习辅助判定：报告里的【机器学习对比】板块由 ml_anomaly 生成 ——
+每个宿舍节点用自己的一批历史温湿度训一个 IsolationForest 基线（C1），
+再拿固定规则和它并排判同一批新样本，看规则放过的情况 ML 能不能发现（C2）。
+数据全部是 analysis/gen_c12_data.py 模拟生成的（source 列写着「模拟」），
+训练历史与待判样本分开存放，互不混入。这块与主 CSV 的统计各算各的，用的是
+data/c12 下自己的数据；缺数据时板块显示原因，不影响报告其余部分。
+固定阈值仍只定义在本文件（judge_temperature / judge_humidity / build_status），
+通过下面的 ML_RULES 整包传给 ml_anomaly，那边不另抄一份。
 """
 
 from __future__ import annotations
@@ -28,7 +37,7 @@ import json
 import math
 import re
 import sys
-from collections import Counter
+from collections import Counter, OrderedDict
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -116,6 +125,16 @@ SUMMARY_CONDITIONS = {
     "偏热+偏湿": "持续偏热偏湿",
 }
 
+# 汇总行里每段结果的短说法。明细表用的是带前导空格的整句结尾
+# （「，开启风扇后 40 分钟恢复」），塞进括号里会读成「4 次（3 次，开启风扇后…）」，
+# 所以单有一份短标签
+SUMMARY_CLASS_LABELS = {
+    "ok": "已恢复",
+    "pending": "仍在处置中",
+    "warn": "处置后未恢复",
+    "idle": "未处置自行恢复",
+}
+
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTDIR = ROOT / "report"
 
@@ -151,6 +170,15 @@ def build_status(temp_state: str, humidity_state: str) -> str:
     if humidity_state != "normal":
         abnormal.append(HUMIDITY_LABELS[humidity_state])
     return "+".join(abnormal) if abnormal else STATE_NORMAL
+
+
+# C1/C2 用：判定规则整包交给 ml_anomaly，阈值只此一份 ——
+# 那边独立运行时也回来 import 这个模块，而不是自己重抄一遍 18/30/75
+ML_RULES = {
+    "judge_temperature": judge_temperature,
+    "judge_humidity": judge_humidity,
+    "build_status": build_status,
+}
 
 
 # ---------------------------------------------------------------- 读取 CSV
@@ -739,6 +767,30 @@ def episode_sentence(facts) -> str:
     return f"{facts['bucket']}发生 1 次{facts['condition']}{facts['ending']}"
 
 
+def node_rollup_text(items) -> str:
+    """一个宿舍一天的汇总：按「时段」分档，每档写次数和结果构成，例如
+    「凌晨 4 次（3 次已恢复、1 次仍在处置中）、上午 2 次（1 次已恢复、1 次未处置自行恢复）」。
+
+    逐段列句子在事件多的时候没法读 —— 测试期一次发几十条报文，一天就是几百段，
+    句式还几乎一模一样，读的人看到的是同一句话重复几百遍，真正要看的
+    「哪个时段多、大多是哪种结局」反而被埋掉了。汇总行只回答这两个问题，
+    具体是哪一段去看下面的明细表和事件复盘。
+    """
+    by_bucket = OrderedDict()
+    for item in sorted(items, key=lambda f: (f["start"] is None, f["start"] or datetime.min)):
+        by_bucket.setdefault(item["bucket"], []).append(item)
+
+    parts = []
+    for bucket, group in by_bucket.items():
+        # 结果构成的顺序固定成「已恢复 → 仍在处置中 → 处置后未恢复 → 未处置自行恢复」，
+        # 不跟 Counter 的计数排序走：同一份日志重跑，句子得长得一模一样
+        counts = Counter(item["cls"] for item in group)
+        detail = "、".join(f"{counts[cls]} 次{SUMMARY_CLASS_LABELS[cls]}"
+                          for cls in ("ok", "pending", "warn", "idle") if counts[cls])
+        parts.append(f"{bucket} {len(group)} 次（{detail}）")
+    return "、".join(parts)
+
+
 def episodes_of_day(events, day):
     """挑出属于这一天的 episode，并剔除日志里没有任何内容、只剩空壳的段。"""
     day_events = [e for e in events if e["time"] is not None and e["time"].date() == day]
@@ -760,7 +812,7 @@ def build_daily_summary(events):
     day = day_of(events)
     if day is None:
         # 键与下面的正常返回保持一致：调用方不必为「没有事件」这一种情况多加判断
-        return {"day": None, "summary": "", "lines": [], "nodes": [],
+        return {"day": None, "summary": "", "lines": [], "rollup": [], "nodes": [],
                 "total": 0, "need_attention": 0, "natural": 0, "ungrouped": 0, "dropped": 0}
 
     episodes, ungrouped, dropped = episodes_of_day(events, day)
@@ -781,23 +833,28 @@ def build_daily_summary(events):
     # 需求示例里的 2 次，对应的是两次真正需要人去管的事件
     natural = sum(1 for item in facts if item["cls"] == "idle")
 
-    lines, nodes = [], []
+    lines, nodes, rollup = [], [], []
     for node in order:
         items = by_node.get(node, [])
         if not items:
             lines.append(f"{node} 全天整体正常")
+            rollup.append(f"{node}：全天整体正常，没有需要关注的事件。")
         else:
             lines.extend(f"{node} {episode_sentence(item)}" for item in items)
+            rollup.append(f"{node}：{node_rollup_text(items)}")
         nodes.append({"node": node, "healthy": not items, "items": items})
 
     need_attention = len(facts) - natural
-    lines.append(f"今日共发生 {need_attention} 次需要关注的环境事件。" if need_attention
-                 else "今日无需要关注的环境事件。")
+    total_line = (f"今日共发生 {need_attention} 次需要关注的环境事件。" if need_attention
+                  else "今日无需要关注的环境事件。")
+    lines.append(total_line)
+    rollup.append(total_line)
 
     return {
         "day": day,
         "summary": "；".join(lines),
         "lines": lines,
+        "rollup": rollup,
         "nodes": nodes,
         "total": len(facts),
         "need_attention": need_attention,
@@ -907,16 +964,36 @@ def render_events_section(events) -> str:
         空白看着像是这一列没渲染出来，一个占位符才说明「这一条确实没有这一项」。"""
         return f"<td>{esc(value)}</td>" if value else '<td class="muted">—</td>'
 
+    def collapse(items):
+        """把连续重复的事件并成一条，返回 [(事件, 重复次数)]。
+
+        同时开着多个 Dashboard 页面时，同一次处置会被每个页面各记一遍，
+        落到日志里就是几行完全一样、连时间戳都相同的事件 —— 报告里原样列出来，
+        读的人只会以为自己看花了眼。只合并**连续**的重复：中间夹了别的事件
+        就说明是两次独立的动作，即使内容一样也不能并。
+        """
+        merged = []
+        for e in items:
+            key = (e["time_text"], e["label"], e["alert"], e["op_text"], event_detail_text(e))
+            if merged and merged[-1][0] == key:
+                merged[-1][1] += 1
+            else:
+                merged.append([key, 1, e])
+        return merged
+
     def event_rows(items):
         rows = []
-        for e in items:
+        for _key, times, e in collapse(items):
+            # 重复次数写在详情这一格：整行只在「同一件事发生了 N 遍」上不同，
+            # 单开一列会让其它所有行都空着一格
+            detail = event_detail_text(e) + (f"（日志重复 {times} 次）" if times > 1 else "")
             rows.append(
                 "<tr>"
                 f"<td class=\"nowrap\">{esc(e['time_text'])}</td>"
                 f"<td>{esc(e['label'])}</td>"
                 f"{cell(e['alert'])}"
                 f"{cell(e['op_text'])}"
-                f"<td>{esc(event_detail_text(e))}</td>"
+                f"<td>{esc(detail)}</td>"
                 "</tr>"
             )
         return "".join(rows)
@@ -928,16 +1005,20 @@ def render_events_section(events) -> str:
         if ep["start"] and ep["end"] and ep["end"] > ep["start"]:
             span = f" · 跨度 {duration_text((ep['end'] - ep['start']).total_seconds() * 1000)}"
         count = sum(1 for e in ep["events"] if e["event_type"] == "reading")
+        when = ep['start'].strftime('%Y-%m-%d %H:%M:%S') if ep['start'] else '时间未知'
+        # 每段折叠成一个 <details>：摘要行回答「哪间房、什么时候、什么事、结论」，
+        # 完整时间线点开才看。日志攒到几百段时，全展开就是一屏接一屏的表格，
+        # 想找某一段只能靠翻 —— 折叠之后先给一张目录，再按需展开
         blocks.append(f"""
-      <div class="episode">
-        <h3>{esc(ep['node'])} · {esc(ep['start'].strftime('%Y-%m-%d %H:%M:%S') if ep['start'] else '时间未知')}
-          <span class="tag tag--{cls}">{esc(state)}</span></h3>
+      <details class="episode">
+        <summary><b>{esc(ep['node'])}</b> · {esc(when)} · {esc(episode_condition(ep))}
+          <span class="tag tag--{cls}">{esc(state)}</span></summary>
         <p class="muted">事件 {len(ep['events'])} 条 · 处置后数据变化 {count} 条{esc(span)}</p>
         <table>
           <thead><tr><th>时间</th><th>事件</th><th>异常类型</th><th>操作</th><th>详情</th></tr></thead>
           <tbody>{event_rows(ep['events'])}</tbody>
         </table>
-      </div>""")
+      </details>""")
 
     if ungrouped:
         # 单独攒出这些行再拼进 f-string：把 "".join(...) 直接写进 f-string 的表达式里，
@@ -955,15 +1036,16 @@ def render_events_section(events) -> str:
             for e in ungrouped
         )
         blocks.append(f"""
-      <div class="episode">
-        <h3>未归组事件（{len(ungrouped)} 条）<span class="tag tag--pending">无 eid</span></h3>
+      <details class="episode">
+        <summary><b>未归组事件（{len(ungrouped)} 条）</b>
+          <span class="tag tag--pending">无 eid</span></summary>
         <p class="muted">这些行没有 episode 标识（detail 里缺 eid 或解析失败），
         无法挂到上面任何一段异常上，原样列出以免漏掉：</p>
         <table>
           <thead><tr><th>时间</th><th>宿舍</th><th>事件</th><th>异常类型</th><th>操作</th><th>详情</th></tr></thead>
           <tbody>{un_rows}</tbody>
         </table>
-      </div>""")
+      </details>""")
 
     settled = sum(1 for ep in episodes if episode_state(ep)[0] != STATE_PENDING)
     return f"""
@@ -1024,14 +1106,22 @@ def render_summary_section(summary) -> str:
     caveat_html = "".join(f"<li>{esc(text)}</li>" for text in caveats)
     caveat_block = f'<ul class="skipped">{caveat_html}</ul>' if caveats else ""
 
+    # 摘要正文用分条列表，不再是一整段「；」接起来的长句子：一天几百段事件时，
+    # 那一段会变成几百句几乎一样的话连成一片，读的人第一眼就放弃了。
+    # 每行回答一个问题（这间房哪个时段出了几次、结局是什么），细节留给下面的表
+    rollup_html = "".join(f"<li>{esc(line)}</li>" for line in summary["rollup"])
+
     return f"""
   <h2>今日摘要（{esc(summary["day"].strftime("%Y-%m-%d"))}）</h2>
   <div class="panel">
-    <p class="headline">{esc(summary["summary"])}</p>
-    <table>
-      <thead><tr><th>宿舍</th><th>时间</th><th>异常类型</th><th>处置</th><th>结果</th><th>用时</th></tr></thead>
-      <tbody>{"".join(rows)}</tbody>
-    </table>
+    <ul class="summary">{rollup_html}</ul>
+    <details>
+      <summary>逐次明细（{summary["total"]} 次）</summary>
+      <table>
+        <thead><tr><th>宿舍</th><th>时间</th><th>异常类型</th><th>处置</th><th>结果</th><th>用时</th></tr></thead>
+        <tbody>{"".join(rows)}</tbody>
+      </table>
+    </details>
     <p class="muted">上面这段话由 analysis/analysis.py 依事件日志自动生成，不是写死的文案：
     换一份事件日志重新运行，摘要会整段重写。表中「处置」列取该段最早的一次操作，
     完整操作序列见下方【事件复盘】；「用时」在已恢复的行里是处置动作到判定的间隔，
@@ -1042,7 +1132,7 @@ def render_summary_section(summary) -> str:
 
 
 def render_report(records, stats, skipped, csv_path: Path, png_name: str, events=None,
-                  summary=None) -> str:
+                  summary=None, ml_section: str = "", c4_section: str = "") -> str:
     esc = html.escape
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -1167,6 +1257,12 @@ def render_report(records, stats, skipped, csv_path: Path, png_name: str, events
   .episode {{ border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;
               margin-top: 14px; background: #fbfcfe; }}
   .episode h3 {{ margin: 0 0 4px; font-size: 14px; }}
+  .episode > summary {{ cursor: pointer; font-size: 14px; }}
+  .episode[open] > summary {{ margin-bottom: 6px; }}
+  .summary {{ margin: 0 0 14px; padding-left: 20px; }}
+  .summary li {{ margin-bottom: 4px; }}
+  details > summary {{ cursor: pointer; color: var(--muted); font-size: 13.5px; }}
+  details[open] > summary {{ margin-bottom: 10px; }}
   .episode .muted {{ margin: 0 0 8px; }}
   .tag {{ display: inline-block; margin-left: 6px; padding: 1px 9px; border-radius: 999px;
           font-size: 12px; font-weight: 600; vertical-align: 1px; }}
@@ -1224,6 +1320,8 @@ def render_report(records, stats, skipped, csv_path: Path, png_name: str, events
   <div class="panel">
     <img class="trend" src="{esc(png_name)}" alt="温湿度趋势图" />
   </div>
+{ml_section}
+{c4_section}
 {events_section}
 {skip_note}{mismatch_note}
   <footer>由 analysis/analysis.py 自动生成 · 共 {stats["count"]} 条有效记录</footer>
@@ -1257,6 +1355,17 @@ def main(argv=None) -> int:
     parser.add_argument("--outdir", default=str(DEFAULT_OUTDIR),
                         help=f"报告输出目录，默认 {DEFAULT_OUTDIR}")
     parser.add_argument("--events", help="A1~A4 事件日志 CSV，缺省为 --csv 同目录的 events.csv")
+    # C1/C2/C4 的数据源。和 --csv 是两套东西：--csv 是主温湿度数据（趋势图那部分），
+    # 这两个只影响「机器学习对比」和「判断不太理想的例子」两个板块。
+    # C4 的验收就是换一份历史重跑报告，所以必须能从命令行换
+    parser.add_argument("--ml-history-dir",
+                        help="C1/C2/C4 用的历史数据目录，缺省为 data/c12。"
+                             "换一份历史 CSV 重新跑，判定会跟着变（C4 验收）")
+    parser.add_argument("--ml-samples",
+                        help="C1/C2 待判样本 CSV，缺省为 --ml-history-dir 下的 new_samples.csv")
+    parser.add_argument("--no-verdicts", action="store_true",
+                        help="不写 Dashboard 读的判定文件。拿临时历史做实验时用，"
+                             "免得把看板上那一列覆盖成实验基线的判定")
     args = parser.parse_args(argv)
 
     csv_path = locate_csv(args.csv)
@@ -1304,9 +1413,27 @@ def main(argv=None) -> int:
     # 温湿度 CSV 里没有宿舍、也没有处置动作
     summary = build_daily_summary(events)
 
+    # C1/C2 机器学习对比：读的是 data/c12 下独立的模拟数据，跟主 CSV 各算各的。
+    # 数据缺失、sklearn 没装都只让这个板块写明原因，不影响报告其余部分
+    try:
+        import ml_anomaly
+    except ImportError:
+        # python -m analysis.analysis 时 sys.path[0] 是仓库根目录，
+        # 同级目录里的模块得按包路径找
+        from analysis import ml_anomaly
+    # history_dir / samples_path 从命令行透传：C4 的验收方式就是「换一份新 CSV
+    # 再跑一遍报告」，没有这两个参数就只能改代码换数据
+    ml_result = ml_anomaly.run_pipeline(
+        history_dir=args.ml_history_dir, samples_path=args.ml_samples, rules=ML_RULES,
+        write_dashboard=not args.no_verdicts,
+    )
+    ml_section = ml_anomaly.render_ml_section(ml_result)
+    c4_section = ml_anomaly.render_c4_section(ml_result.get("c4") or {})
+
     report_path = outdir / "report.html"
     report_path.write_text(
-        render_report(records, stats, skipped, csv_path, png_path.name, events, summary),
+        render_report(records, stats, skipped, csv_path, png_path.name, events, summary,
+                      ml_section, c4_section),
         encoding="utf-8",
     )
 
@@ -1324,8 +1451,16 @@ def main(argv=None) -> int:
 
     # 摘要打到控制台上，是为了让「这段话是程序生成的」当场可见：
     # 报告是覆盖写的，屏幕上这一行和 report.html 里那一句必然同源同次
+    # 控制台打的也是分条汇总：报告里那一版是同样的句子，两处同源同次
     print(f"\n今日摘要（{summary['day'] or '事件日志里没有可用时间'}）：")
-    print(f"  {summary['summary'] or '（无事件记录，未生成摘要）'}")
+    if summary["rollup"]:
+        for line in summary["rollup"]:
+            print(f"  {line}")
+    else:
+        print("  （无事件记录，未生成摘要）")
+
+    # 对照表也打到屏幕上：报告是覆盖写的，这一行和 report.html 里的板块同源同次
+    print("\n" + ml_anomaly.format_console(ml_result))
 
     print(f"\n已生成：\n  {png_path}\n  {report_path}")
     return 0

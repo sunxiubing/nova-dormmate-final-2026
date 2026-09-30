@@ -81,6 +81,18 @@
        border:1px solid #d0b48a;border-radius:4px;background:#fff;color:#8a6d3b;cursor:pointer;
      }
      .a1-table td.ops-cell .row-ops-btn:hover{background:#f5ead9;border-color:#b88230;color:#b88230;}
+     /* ML 辅助判断列（C3）。这一列的值是离线分析算出来的，不是随报文实时变的 ——
+          颜色只区分「接近平时 / 与平时明显不同」，滞后与否用旁边那个小标说，
+          两者都用颜色表达的话，读的人分不清哪个是判定、哪个是新鲜度 */
+     .ml-cell{white-space:nowrap;font-size:13px;}
+     .ml-cell .ml-normal{color:#12996b;}
+     .ml-cell .ml-anomaly{color:#dd4b32;font-weight:600;}
+     .ml-cell .ml-none{color:#aaa;}
+     .ml-cell .ml-stale{
+       margin-left:4px;padding:0 3px;border:1px solid #d8d8d8;border-radius:3px;
+       font-size:11px;color:#9a9a9a;font-weight:400;
+     }
+     .overview-note{margin:2px 0 8px;font-size:12px;color:#9a9a9a;line-height:1.6;}
      /* 反色的那段 = 当前状态。开着的时候是「开」亮，关着的时候是「关」亮 */
      .a1-table td.ops-cell .row-ops-btn.is-on{background:#e6a23c;border-color:#e6a23c;color:#fff;font-weight:600;}
      .a1-target{margin:0 0 8px;font-size:13px;color:#8a6d3b;}
@@ -120,10 +132,11 @@
      <h3 class="overview-title">三宿舍总览<span class="overview-sub" id="overviewSub"></span></h3>
      <table class="a1-table" id="a1Table">
        <thead>
-         <tr><th>宿舍</th><th>异常类型</th><th>已持续</th><th>异常次数</th><th>操作</th></tr>
+         <tr><th>宿舍</th><th>异常类型</th><th>ML 辅助判断</th><th>已持续</th><th>异常次数</th><th>操作</th></tr>
        </thead>
        <tbody id="a1TableBody"></tbody>
      </table>
+     <p class="overview-note" id="mlNote"></p>
    </div>
    <!-- A1 优先提示 + A2 处置按钮。没有异常宿舍时整块隐藏（脚本里控制 display）——
         常态下不该常驻一个「暂无异常」的空框占着版面 -->
@@ -1131,6 +1144,111 @@ function overviewStatus(n){
   return {text:text, abnormal:text !== '正常', hasValue:true}
 }
 
+// ---------------------------------------------------------------- ML 辅助判断（C3）
+// 这一列的值来自 analysis/ml_anomaly.py 写出的 ml_verdicts.json ——
+// 由 python analysis/analysis.py 重新生成。页面不重算模型：作业要求的轻量做法
+// 就是「Python 生成结果文件、现有页面读取展示」，在浏览器里再实现一遍
+// IsolationForest 属于把简单问题做复杂，而且必然会和 Python 那边算出不一样的数。
+//
+// 代价是这一列永远是「上一次跑分析时」的结论，不随报文变。所以下面每次渲染都要
+// 分清两种情况：读数在上次分析的样本里对得上（判定就是针对这条读数的，直接显示），
+// 对不上（显示的是上一次的结论，必须挂「上次分析」小标）。
+const ML_VERDICTS_URL = './ml_verdicts.json'
+const ML_REFRESH_MS = 30000          // 分析重跑后，看板不刷新也能在 30 秒内跟上
+let mlVerdicts = null                // null = 还没取到（文件没有 / file:// 打开被浏览器拦）
+let mlFetchedAt = ''
+
+// 读数是数字，JSON 里是四舍五入到 1 位的数 —— 两边同一套精度，比对才不会被
+// 25.000000000000004 这种浮点尾巴毁掉。温度湿度都换成一位小数的字符串来比
+function mlKey(temp, humi){
+  const t = parseFloat(temp), h = parseFloat(humi)
+  if(!isFinite(t) || !isFinite(h)) return null
+  return t.toFixed(1) + '/' + h.toFixed(1)
+}
+
+// 这个宿舍当前该显示哪条 ML 判定。
+// 先拿当前读数去 recent 里找对得上的（对上了说明上次分析判过这条，是最准的）；
+// 找不到就退回最新一条并标「上次」。两条都没有 = 这个节点还没有任何实时样本
+function mlVerdictFor(n){
+  const d = dataStore[n]
+  const node = mlVerdicts && mlVerdicts.nodes ? mlVerdicts.nodes[n] : null
+  if(!node || !node.latest) return null
+  if(!d || d.temperature === '--') return null
+
+  const want = mlKey(d.temperature, d.humidity)
+  if(want){
+    const hit = (node.recent || []).find(function(v){ return mlKey(v.temperature, v.humidity) === want })
+    if(hit) return {verdict:hit, stale:false}
+  }
+  // 对不上不等于判定作废：ML 看的是「这间房的这个读数像不像平时」，
+  // 上次那条读数跟现在不完全一样而已，标上时间让用户自己判断参考价值
+  return {verdict:node.latest, stale:true}
+}
+
+function mlCellNode(n){
+  const td = document.createElement('td')
+  td.className = 'ml-cell'
+  const found = mlVerdictFor(n)
+  if(!found){
+    td.innerHTML = '<span class="ml-none" title="还没有这个宿舍的实时样本。'
+      + '用 MQTTX 发几条报文，再跑 python analysis/analysis.py">—</span>'
+    return td
+  }
+  const v = found.verdict
+  const span = document.createElement('span')
+  span.className = v.ml_anomaly ? 'ml-anomaly' : 'ml-normal'
+  span.innerText = v.ml_text
+  span.title = '判定依据：' + v.time + ' 的 ' + v.temperature.toFixed(1) + ' ℃ / '
+    + v.humidity.toFixed(1) + ' %（分数 ' + v.ml_score.toFixed(3) + '）'
+    + '；固定规则当时判「' + v.rule_status + '」'
+  td.appendChild(span)
+  if(found.stale){
+    const tag = document.createElement('span')
+    tag.className = 'ml-stale'
+    tag.innerText = '上次分析'
+    tag.title = '这不是当前读数的判定。当前 ' + d_tempText(n) + ' 在上次分析里没有对应记录，'
+      + '显示的是 ' + v.time + ' 那条的结论 —— 重跑 python analysis/analysis.py 可刷新'
+    td.appendChild(tag)
+  }
+  return td
+}
+
+function d_tempText(n){
+  const d = dataStore[n]
+  return (d && d.temperature !== '--') ? (d.temperature + ' ℃ / ' + d.humidity + ' %') : '读数'
+}
+
+function renderMlNote(){
+  const el = document.getElementById('mlNote')
+  if(!el) return
+  if(!mlVerdicts){
+    el.innerText = 'ML 辅助判断未加载：先跑 python analysis/analysis.py 生成 '
+      + 'dashboard/ml_verdicts.json（用 file:// 直接打开本页时浏览器会拦下这次读取，'
+      + '请改用 Live Server）。'
+    return
+  }
+  el.innerText = 'ML 辅助判断来自离线分析（' + (mlVerdicts.generated_at || '—')
+    + '，基线为模拟历史数据），不是随报文实时计算的；'
+    + '读数变过、上次分析没判过这一条时会标「上次分析」并沿用旧结论。'
+}
+
+// 取判定文件。失败是常态的一种（文件还没生成、file:// 打开），不是异常 ——
+// 静默把 mlVerdicts 置空，页面上那一列显示「—」，绝不打断 MQTT 主流程
+function loadMlVerdicts(){
+  fetch(ML_VERDICTS_URL, {cache:'no-store'})
+    .then(function(r){ return r.ok ? r.json() : null })
+    .then(function(j){
+      mlVerdicts = j
+      mlFetchedAt = new Date().toLocaleTimeString()
+      renderMlNote()
+      try{ renderFromStore() }catch(e){}
+      try{ refreshWinner() }catch(e){}
+    })
+    .catch(function(){ mlVerdicts = null; renderMlNote() })
+}
+loadMlVerdicts()
+setInterval(loadMlVerdicts, ML_REFRESH_MS)
+
 // 三宿舍总览表：一个宿舍一行，最右边直接给操作按钮。
 // 「异常类型」这一列只回答「它怎么了」（偏冷 / 偏湿 / 偏冷偏湿），
 // 不带「持续低温偏湿」那种规则味 —— 规则是横幅那句结论的事，
@@ -1175,6 +1293,12 @@ function renderOverview(result, now){
       td.innerText = v
       tr.appendChild(td)
     })
+
+    // ML 辅助判断插在「异常类型」后面：两列回答的是同一类问题（这间房怎么了），
+    // 一个用固定阈值、一个用这间房自己的历史，并排摆着差异才看得见 ——
+    // 也正是 C2 要找的那种「规则说正常、ML 说不像平时」的差异。
+    // 注意插入位置：cells 已按序 append 完，这里用的是 insertBefore 插到第 3 格
+    tr.insertBefore(mlCellNode(n), tr.children[2])
 
     // 操作格：每台设备两个按钮（开 / 关），作用在这一行的宿舍上（不是 A1 的赢家）。
     // 当前状态用反色标出来：开着的时候「开」是亮的，不用去别处找

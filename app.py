@@ -17,11 +17,18 @@
   GET  /api/eventLog     读全部事件，给 analysis.py 的事件复盘和页面排查用
   POST /api/nodeStatus   B4 看板快照：三宿舍最新读数（dashboard 每条报文上报一次）
   GET  /api/nodeStatus   B4 看板快照：小程序「宿舍实时状态」卡读它
+
+另有一条后台链路：app.py 自己订阅 MQTT（dormmate/+/env），见 start_mqtt()。
+报文不再必须先经过浏览器里的 Dashboard 才能进到服务端 —— 原来只有那一条路，
+页面一关或掉线，小程序的状态卡就永远停在「未上报」。事件日志（A1~A4 的
+events.csv）仍然只由 Dashboard 产生，app.py 不碰，免得同一次异常被记两遍。
 """
 import csv
 import json
 import os
+import re
 import threading
+import time
 from datetime import datetime
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -60,6 +67,33 @@ EVENT_NODES = {"dorm-a", "dorm-b", "dorm-c"}
 # Flask 开发服务器是多线程的，读改写要加锁，不然两个请求同时到会丢更新
 NODE_STATUS = {}
 NODE_STATUS_LOCK = threading.Lock()
+
+# MQTT：app.py 自己订阅 broker，作为 Dashboard 之外的第二条数据入口。
+# 默认端口 1884 是 mosquitto.conf 里的 tcp listener（另一个 9001 是 websockets，
+# 给浏览器用的）。同一 broker 的各个 listener 互通，MQTTX 发到 1884 或 9001，
+# 这里都收得到。换台机器部署就用环境变量覆盖。
+MQTT_HOST = os.environ.get("DORMATE_MQTT_HOST", "127.0.0.1")
+MQTT_PORT = int(os.environ.get("DORMATE_MQTT_PORT", "1884"))
+MQTT_TOPIC = "dormmate/+/env"
+MQTT_RETRY_SECONDS = 5
+MQTT_TOPIC_PATTERN = re.compile(r"^dormmate/([^/]+)/env$")
+
+# C1/C2 的实时样本：MQTT 每来一条报文就追加一行，供 analysis/ml_anomaly.py
+# 拿最新的真实读数跟「这间房平时什么样」的基线对照。
+# 和 data/c12 下的模拟历史严格分开：那份是训练用的模拟数据，这份是实测。
+LIVE_SAMPLES_CSV = os.environ.get("DORMATE_LIVE_SAMPLES",
+                                  os.path.join(BASE_DIR, "data", "c12", "live_samples.csv"))
+LIVE_HEADER = ["node", "time", "temperature", "humidity", "source"]
+LIVE_SOURCE_REAL = "实时"
+# 上限行数：演示时动辄连发上百条报文，文件不能无限长。超了就重写保留最后这些行。
+# 报告只展示最新 12 条，120 行留了足够余量做「最近一段时间的走势」
+LIVE_MAX_ROWS = 120
+# 同一节点的相同读数在这个秒数内只记一次。挡住两种重复：
+#   1. Dashboard 上报和 MQTT 订阅是两条路，同一条报文会各走一遍
+#   2. MQTTX 手动连发同一个 payload
+LIVE_DEDUP_SECONDS = 5
+_last_live = {}
+LIVE_LOCK = threading.Lock()
 
 # 扩展名白名单。上传口是唯一的外部输入点，这里只做白名单、不做「排除 .exe」那种反向过滤 ——
 # 反向过滤永远漏，白名单漏不了
@@ -198,6 +232,139 @@ def append_event_row(row):
         writer.writerow([row.get(key, "") for key in EVENT_HEADER])
 
 
+# ---------------- 实时读数：快照 + 实时样本 ----------------
+
+def record_live_sample(node, temp_text, humi_text):
+    """把一条实测读数追加到 live_samples.csv。同一个节点的相同读数
+    在 LIVE_DEDUP_SECONDS 秒内只记一次（见常量处的说明）。"""
+    now = time.time()
+    signature = (temp_text, humi_text)
+    with LIVE_LOCK:
+        last = _last_live.get(node)
+        if last and last[0] == signature and now - last[1] < LIVE_DEDUP_SECONDS:
+            return False
+        _last_live[node] = (signature, now)
+
+    directory = os.path.dirname(LIVE_SAMPLES_CSV)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+
+    # 和 append_row 同一套 BOM/CRLF 规矩：新建才写 BOM，追加用 utf-8
+    is_new = not os.path.exists(LIVE_SAMPLES_CSV)
+    with open(LIVE_SAMPLES_CSV, "w" if is_new else "a",
+              encoding="utf-8-sig" if is_new else "utf-8", newline="") as f:
+        writer = csv.writer(f)
+        if is_new:
+            writer.writerow(LIVE_HEADER)
+        writer.writerow([node, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                         temp_text, humi_text, LIVE_SOURCE_REAL])
+
+    trim_live_samples()
+    return True
+
+
+def trim_live_samples():
+    """超过 LIVE_MAX_ROWS 就把文件重写成「表头 + 最后 N 行」。
+    调用点已经加了锁（record_live_sample），这里不再重复加。"""
+    try:
+        with open(LIVE_SAMPLES_CSV, "r", encoding="utf-8-sig", newline="") as f:
+            rows = list(csv.reader(f))
+    except OSError:
+        return
+    if len(rows) - 1 <= LIVE_MAX_ROWS:
+        return
+    keep = rows[1:][-LIVE_MAX_ROWS:]
+    with open(LIVE_SAMPLES_CSV, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(LIVE_HEADER)
+        writer.writerows(keep)
+
+
+def apply_node_reading(node, temp, humi, source):
+    """一条读数进来之后要做的两件事：更新内存快照、记一份实时样本。
+    POST 接口和 MQTT 订阅都走这里，两条路的落库方式不会各写各的。
+    返回算出来的状态文本。"""
+    temp_text, humi_text = fmt_num(temp), fmt_num(humi)
+    status = compute_status(temp, humi)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with NODE_STATUS_LOCK:
+        NODE_STATUS[node] = {"temperature": temp_text, "humidity": humi_text, "status": status}
+        NODE_STATUS["_updated_at"] = now
+    if record_live_sample(node, temp_text, humi_text):
+        print("[报文] %s %s ℃ / %s %% → %s（来源：%s）"
+              % (node, temp_text, humi_text, status, source), flush=True)
+    return status
+
+
+# ---------------- MQTT 订阅 ----------------
+
+def start_mqtt():
+    """后台线程订阅 broker。收不到 broker 就每 5 秒重试一次，
+    永远不抛出去 —— MQTT 断了只是「实时那部分不更新」，
+    HTTP 接口（历史记录、上传、小程序其它卡片）全都该照常工作。"""
+    try:
+        import paho.mqtt.client as mqtt
+    except ImportError:
+        print("[MQTT] 未安装 paho-mqtt，已跳过订阅（实时状态卡将只认 Dashboard 上报）。"
+              "安装：pip install paho-mqtt", flush=True)
+        return
+
+    # paho 2.x 要求显式声明回调版本；1.x 没有这个参数，退化成旧写法
+    try:
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="dormmate-backend")
+    except AttributeError:
+        client = mqtt.Client(client_id="dormmate-backend")
+
+    state = {"logged": False}
+
+    def on_connect(client, userdata, flags, reason_code, properties=None):
+        # 回调版本不同，reason_code 的位置也不同：v2 给的是 ReasonCode 对象，
+        # v1 直接给 int。取到 0 才算连上
+        code = getattr(reason_code, "value", reason_code)
+        if code:
+            print("[MQTT] 连接被拒：%s" % reason_code, flush=True)
+            return
+        client.subscribe(MQTT_TOPIC, qos=0)
+        print("[MQTT] 已连接 %s:%d，订阅 %s" % (MQTT_HOST, MQTT_PORT, MQTT_TOPIC), flush=True)
+
+    def on_disconnect(client, userdata, *args):
+        print("[MQTT] 与 broker 断开，paho 会自动重连", flush=True)
+
+    def on_message(client, userdata, message):
+        try:
+            match = MQTT_TOPIC_PATTERN.match(message.topic)
+            node = (match and match.group(1)) or None
+            if node not in EVENT_NODES:
+                return
+            msg = json.loads(message.payload.decode("utf-8"))
+            temp, err = parse_reading(msg.get("temperature"), "温度", *TEMP_RANGE)
+            if err:
+                return
+            humi, err = parse_reading(msg.get("humidity"), "湿度", *HUMI_RANGE)
+            if err:
+                return
+            apply_node_reading(node, temp, humi, "MQTT")
+        except Exception as exc:                     # noqa: BLE001
+            # 一条坏报文不该让订阅线程死掉 —— 线程一死，后面所有报文都收不到了
+            print("[MQTT] 报文处理失败（已跳过）：%s" % exc, flush=True)
+
+    client.on_connect = on_connect
+    client.on_disconnect = on_disconnect
+    client.on_message = on_message
+
+    def worker():
+        while True:
+            try:
+                client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
+                client.loop_forever(retry_first_connection=False)
+            except Exception as exc:                 # noqa: BLE001
+                print("[MQTT] 连不上 %s:%d（%s），%d 秒后重试"
+                      % (MQTT_HOST, MQTT_PORT, exc, MQTT_RETRY_SECONDS), flush=True)
+            time.sleep(MQTT_RETRY_SECONDS)
+
+    threading.Thread(target=worker, name="dormmate-mqtt", daemon=True).start()
+
+
 # ---------------- 接口 ----------------
 
 @app.route("/api/getHistory", methods=["GET"])
@@ -243,16 +410,14 @@ def set_node_status():
         humi, err = parse_reading(item.get("humidity"), "湿度", *HUMI_RANGE)
         if err:
             return jsonify({"code": 1, "msg": "%s：%s" % (node, err)}), 400
-        snapshot[node] = {
-            "temperature": fmt_num(temp),
-            "humidity": fmt_num(humi),
-            "status": compute_status(temp, humi),
-        }
+        snapshot[node] = (temp, humi)
 
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with NODE_STATUS_LOCK:
-        NODE_STATUS.update(snapshot)
-        NODE_STATUS["_updated_at"] = now
+    now = None
+    for node, (temp, humi) in snapshot.items():
+        # 和 MQTT 订阅走同一个出口：快照照旧更新，顺带记一份实时样本。
+        # 两条路的相同读数会被 record_live_sample 去重，不会记成两行
+        apply_node_reading(node, temp, humi, "Dashboard")
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return jsonify({"code": 0, "msg": "已更新", "time": now})
 
 
@@ -397,4 +562,9 @@ def serve_media(filename):
 
 
 if __name__ == "__main__":
+    # Flask 的 debug 重载器会把本模块跑两遍：父进程只负责监视文件、不执行 app.run，
+    # 真正干活的是 WERKZEUG_RUN_MAIN=true 的子进程。不加这道判断的话，
+    # 两个进程各起一条订阅线程，每条报文被处理两遍
+    if not DEBUG or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        start_mqtt()
     app.run(host="0.0.0.0", port=PORT, debug=DEBUG)

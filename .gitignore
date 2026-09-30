@@ -11,16 +11,21 @@ report/*
 !report/report.html
 
 # data目录规则：只保留正式数据 dormmate.csv，调试期的临时导出忽略
-# （不含 dormmate_*.csv — 下划线是必需的，通配符不会误伤它）
 data/dormmate_*.csv
 
-# A4 事件日志：一次处置闭环就写一批，属于运行时产物（复盘报告的输入），不进 git。
-# 想留档就把这个文件单独复制出去 — 报告里的事件复盘板块是从它生成的
+# A4 事件日志：运行时产物，不进 git
 data/events.csv
 
-# 媒体文件（照片/视频/录音）是运行时产物，体积大且可重新采集，不进 git.
-# CSV 里只存文件名索引，完整备份需要单独复制这个文件夹 — 所以它必须留在 .gitignore 里
-# 不然一次提交就可能塞进几十 MB 二进制
+# C1/C2 实时样本：MQTT实时追加实测记录，不进仓库
+data/c12/live_samples.csv
+
+# C3 看板ML判定快照，每次analysis.py运行重生成
+dashboard/ml_verdicts.json
+
+# C4实验临时数据集，可随时重新生成
+data/c12/few/
+
+# 媒体文件，运行产物，体积大
 data/media/
 
 # VSCode本地配置文件
@@ -31,6 +36,6 @@ data/media/
 *.tmp
 *.bak
 
-# 系统自动生成的垃圾文件
+# 系统垃圾文件
 .DS_Store
 Thumbs.db
