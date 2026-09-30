@@ -124,3 +124,11 @@
 .history-tag.wet    { background: #efe9fd; color: #7c53e0; }
 
 .empty-state { text-align: center; font-size: 26rpx; color: #999; padding: 40rpx 0; }
+
+/* --- B4 宿舍实时状态卡 --- */
+.node-list { display: flex; flex-direction: column; gap: 12rpx; }
+.node-row { display: flex; align-items: center; padding: 16rpx; background: #f8f9fa; border-radius: 10rpx; }
+.node-name { width: 130rpx; font-size: 28rpx; font-weight: bold; color: #333; }
+.node-value { flex: 1; font-size: 26rpx; color: #555; }
+/* 「更新于 …」贴在标题行右侧，字号比标题小一档，不抢主信息 */
+.node-updated { font-size: 22rpx; color: #999; }

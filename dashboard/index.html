@@ -211,10 +211,13 @@
  // 声明全部排在前面、startClient 调用放在脚本最末，是为了避开 TDZ：脚本一旦在中间抛错，
  // 它后面的 const/let 都不会执行，点「查看DormA」碰到未初始化的 dataStore 会静默抛
  // "Cannot access 'dataStore' before initialization"，从页面上看就是「按钮点了完全没反应」。
+ // prev 是上一帧读数（{temperature,humidity}），只给 B4 的趋势段用：
+ // 横幅要能说出「温度正在下降」，就得有上一帧可比。首条报文时 prev 是 null，
+ // trendText 会判成「无趋势」，横幅省掉第三段而不是瞎说一个方向
  const dataStore = {
-   "dorm-a": {temperature:"--",humidity:"--",status:"--"},
-   "dorm-b": {temperature:"--",humidity:"--",status:"--"},
-   "dorm-c": {temperature:"--",humidity:"--",status:"--"}
+   "dorm-a": {temperature:"--",humidity:"--",status:"--",prev:null},
+   "dorm-b": {temperature:"--",humidity:"--",status:"--",prev:null},
+   "dorm-c": {temperature:"--",humidity:"--",status:"--",prev:null}
  }
  let selectedNode = null
 
@@ -802,6 +805,60 @@ function postEvent(node, type, detail, alert, op_text){
   return eventChain
 }
 
+// ---------- B4：看板快照上报 ----------
+// 小程序的「宿舍实时状态」卡读的是 app.py 里这份快照：Dashboard 收到报文 →
+// POST 到这里 → app.py 存内存 → 小程序 GET。看板本来就在收三宿舍的报文，
+// 让它顺手报一份，比让小程序直连 MQTT（要另配 ws 地址、另写一套订阅）省事得多。
+// 只报真实收到过的节点：'--' 占位符发出去服务端也会拒；
+// 也不在 loadState 恢复时上报 —— 快照代表「当前实时值」，上次会话的旧值不该冒充
+let nodeStatusInFlight = false
+let nodeStatusWarned = false
+function postNodeStatus(){
+  if(nodeStatusInFlight) return      // 报文几秒一条，跟着报文走就够快；不排队堆积
+  const nodes = {}
+  NODES.forEach(function(n){
+    const d = dataStore[n]
+    if(Number.isFinite(d.temperature) && Number.isFinite(d.humidity)){
+      nodes[n] = {temperature: d.temperature, humidity: d.humidity}
+    }
+  })
+  if(!Object.keys(nodes).length) return
+  const body = JSON.stringify({nodes: nodes})
+
+  function send(base){
+    const ctl = (typeof AbortController === 'function') ? new AbortController() : null
+    const timer = ctl ? setTimeout(function(){ ctl.abort() }, 2000) : null
+    return fetch(base + '/api/nodeStatus', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:body,
+      signal: ctl ? ctl.signal : undefined
+    }).then(function(r){
+      if(timer) clearTimeout(timer)
+      return r.ok
+    })
+  }
+
+  nodeStatusInFlight = true
+  const settle = function(ok){
+    nodeStatusInFlight = false
+    if(ok){ nodeStatusWarned = false; return }
+    // 只提示一次：演示时不弹提示框（那会挡住看板），控制台留一行就够定位
+    if(!nodeStatusWarned){
+      nodeStatusWarned = true
+      console.warn('看板状态上报失败：启动 app.py 后小程序的宿舍实时状态卡才能更新')
+    }
+  }
+  let i = 0
+  const tryNext = function(){
+    if(i >= API_HOSTS.length) return settle(false)
+    const base = API_HOSTS[i++]
+    send(base).catch(function(){ return false })
+      .then(function(ok){ return ok ? settle(true) : tryNext() })
+  }
+  tryNext()
+}
+
 // ---------- A2：处置动作 ----------
 function publishOps(payload){
   if(!client || !client.connected){
@@ -1000,6 +1057,49 @@ function busyState(n){
   return ''
 }
 
+// B4 三段式横幅的第二段：状态词。判定尺子和 busyState 完全一样 ——
+// 结论过了保留期就不算数，横幅不能一直挂着「已恢复」；没人处置过的异常叫「异常中」。
+// 单独抽出来是因为横幅只要「处理中」三个字，而 stateText 带的是「处理中｜风扇已开启 · …」
+function stateWord(n){
+  const fsm = fsmOf(n)
+  if(fsm.state === 'handling') return '处理中'
+  if(fsm.state === 'recovered' || fsm.state === 'attention'){
+    const held = clock() - (fsm.concludedAt || 0)
+    if(held < VERDICT_HOLD_MS) return fsm.state === 'recovered' ? '已恢复' : '仍需关注'
+  }
+  return '异常中'
+}
+
+/* 最近下过结论、且结论还在保留期内的那一间（已恢复 / 仍需关注取更晚的那个）。
+   异常段一结束，tracker 里的 abnormalSince 就归零了，A1.pick 再也选不出它 ——
+   可用户把温度压下去之后，最想看见的恰恰是那句「已恢复」。
+   所以横幅在没人异常时退回指它；过了保留期就不指了，
+   尺子和 busyState 完全一样，两处不会一个说还在保留、一个说已经过期 */
+function concludedNode(){
+  const now = clock()
+  let best = null
+  NODES.forEach(function(n){
+    const fsm = fsmState[n]
+    if(!fsm) return
+    if(fsm.state !== 'recovered' && fsm.state !== 'attention') return
+    if(!busyState(n)) return                                  // 结论过期，不再代表「现在」
+    if(!best || (fsm.concludedAt || 0) > (fsmState[best].concludedAt || 0)) best = n
+  })
+  return best
+}
+
+// 状态章只讲处置细节：状态词已经进了横幅，同一句话不该在同一页出现两次。
+// progressText 正常路径下是空串，得跳过再拼，不然会留下一个孤零零的「 · 」
+function stateDetail(fsm){
+  if(fsm.state === 'handling'){
+    const progress = progressText(fsm)
+    return opsSummary(fsm) + (progress ? ' · ' + progress : '')
+  }
+  if(fsm.state === 'recovered') return '处置后第 ' + VERDICT_NEED + ' 条报文已正常（系统自动判定）'
+  if(fsm.state === 'attention') return '处置后第 ' + VERDICT_NEED + ' 条报文仍异常（系统自动判定）'
+  return ''
+}
+
 // 本次会话已收到过报文的宿舍。loadState() 会把 localStorage 里的旧值恢复进 dataStore，
 // 但那些值是不是「现在」的，页面并不知道 —— 没有这个集合就会出现自相矛盾的一幕：
 // 卡片显示 17.9℃/80%「偏冷偏湿」（上次会话留下的），
@@ -1168,36 +1268,50 @@ function renderA1(){
   }
   panel.style.display = ''
 
+  // B4：横幅只说三件事 —— 哪个宿舍、处置到哪一步、正在往哪走（dorm-b | 处理中 | 温度正在下降）。
+  // 异常类型/次数/已持续时长从横幅撤下来了：它们在同一页的总览表里逐行都有，
+  // 横幅再复述一遍，看板最显眼的一行就被细节淹了。想看「为什么是它」看总览表标题
+  //
+  // 指谁：有异常宿舍就指异常宿舍；异常段已经结束、结论还在保留期内的，指最近下结论的那一间。
+  // 指过去不等于还能点进去 —— 它已经不是「当前异常」，所以走 is-idle 的灰字样式，
+  // 点击也随之失效（点击回调认的是 winnerNode，没有赢家就不响应）
   const banner = document.getElementById('a1Banner')
-  if(result.node){
-    banner.innerText = '当前最值得关注：' + A1.describe(result).text
-    banner.className = 'a1-banner'
-    banner.title = '点击进入该宿舍的 3D 房间与趋势图'
+  const showNode = result.node || concludedNode()
+  if(showNode){
+    const d = dataStore[showNode]
+    // 结论节点已经没有异常类型了（tracker 里 kind 被清零），传 null 让 trendText 自己挑维度
+    const kind = result.node ? result.kind : null
+    const trend = A1.trendText(kind, d && d.prev, d)
+    banner.innerText = [showNode, stateWord(showNode), trend].filter(Boolean).join(' | ')
+    banner.className = 'a1-banner' + (result.node ? '' : ' is-idle')
+    banner.title = result.node ? '点击进入该宿舍的 3D 房间与趋势图' : ''
   }else{
-    // 异常段已经结束、结论还在保留期内：横幅没有指向的目标，就不能再假装有
     banner.innerText = '当前没有异常宿舍（下面是最近一次处置的结果）'
     banner.className = 'a1-banner is-idle'
     banner.title = ''
   }
 
-  // 按钮作用于哪个宿舍，写在按钮上方。不点明的话，用户按下去不知道动的是哪间房
+  // 按钮作用于哪个宿舍，写在按钮上方。不点明的话，用户按下去不知道动的是哪间房。
+  // 规则原因（「持续高温时间更长」）不在这里重复：总览表标题的「当前优先：…」已经写了
   const target = document.getElementById('a1Target')
   if(target){
     target.innerText = result.node
-      ? '处置对象：' + result.node + '（' + A1.whyText(result) + '）'
+      ? '处置对象：' + result.node
       : '当前没有异常宿舍，按钮暂不可用'
   }
 
-  // 状态章只讲赢家：横幅指向谁，按钮就作用在谁身上，状态章跟着横幅走才不会错位
+  // 状态章只讲横幅上那一个：横幅指向谁，状态章就跟着讲谁，两行才不会错位。
+  // B4 之后它只剩处置细节（开了哪些设备、处置后判成什么），状态词去横幅了
   const chip = document.getElementById('a1Chip')
-  const winText = result.node ? stateText(fsmOf(result.node)) : ''
-  chip.innerText = winText
-  chip.className = 'a1-chip' + (winText ? ' ' + fsmOf(result.node).state : '')
+  const showFsm = showNode ? fsmOf(showNode) : null
+  const showText = (showFsm && busyState(showNode)) ? stateDetail(showFsm) : ''
+  chip.innerText = showText
+  chip.className = 'a1-chip' + (showText ? ' ' + showFsm.state : '')
 
-  // 其余宿舍的处置状态单独一行
+  // 其余宿舍的处置状态单独一行（横幅上那一间不在这里复述）
   const states = document.getElementById('a1States')
   if(states){
-    states.innerText = busy.filter(function(n){ return n !== result.node })
+    states.innerText = busy.filter(function(n){ return n !== showNode })
       .map(function(n){ return n + '：' + busyState(n) }).join('　')
   }
 }
@@ -1364,6 +1478,10 @@ function onMessage(topic, payload){
     // 而总览表的「异常类型」读的正是 dataStore —— 顺序反过来的话，
     // 这次渲染出来的是上一条报文的值：一条 31℃ 的报文到了，表里还写着「正常」，
     // 要等下一条报文才追上，中间那一瞬是错的
+    // 先记上一帧再覆盖 —— B4 横幅/语音的「温度正在下降」要拿上一帧比。
+    // 首条报文时 prev 是 null，trendText 判无趋势，不会瞎说方向
+    dataStore[node].prev = {temperature: dataStore[node].temperature,
+                            humidity: dataStore[node].humidity}
     dataStore[node].temperature = temp
     dataStore[node].humidity = hum
     dataStore[node].status = status
@@ -1403,6 +1521,9 @@ function onMessage(topic, payload){
     pushPoint(chartHum,  nodeIndex, hum,  t.label, t.epoch)
     setSyncTime(t.label)
     saveState()          // 两张图都推进完了再存，存的才是完整状态
+    // B4：把这份「当前三宿舍快照」报给 app.py，小程序的宿舍实时状态卡读它。
+    // 排在 saveState 之后，本地状态先落地，上报失败也不影响看板自己
+    postNodeStatus()
   }catch(err){
     console.error("❌解析消息出错！",err,"原始消息：",raw)
   }

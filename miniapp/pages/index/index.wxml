@@ -83,6 +83,28 @@
 
     </view>
 
+    <!-- B4：宿舍实时状态卡。三间房一行一个 —— 手机上就着碎片时间看一眼「现在怎么样」，
+         温湿度加一个状态标签够了；异常类型/持续时长/处置到哪一步不搬过来，
+         那些是 Dashboard 和复盘报告的事，同一段信息复制到每个页面反而没人知道该看哪页 -->
+    <view class="card">
+      <view class="history-header">
+        <text class="card-title">宿舍实时状态</text>
+        <text class="node-updated">{{nodeStatus.updatedAt ? '更新于 ' + nodeStatus.updatedAt : ''}}</text>
+      </view>
+
+      <view class="node-list" wx:if="{{nodeStatus.list.length}}">
+        <view class="node-row" wx:for="{{nodeStatus.list}}" wx:key="name">
+          <text class="node-name">{{item.name}}</text>
+          <text class="node-value">{{item.temp}} °C / {{item.humi}} %</text>
+          <view class="history-tag {{item.statusClass}}">{{item.statusText}}</view>
+        </view>
+      </view>
+
+      <view wx:if="{{!nodeStatus.list.length}}" class="empty-state">
+        暂无看板数据：请启动 app.py 并打开 Dashboard 页面
+      </view>
+    </view>
+
     <!-- 下部：历史记录 -->
     <view class="card">
       <view class="history-header">

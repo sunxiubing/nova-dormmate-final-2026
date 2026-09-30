@@ -22,28 +22,39 @@ function computeStatus(t,h){
    现在已经是 192.168.171.200 了。换了网络环境，改下面这一行就行。 */
 const API_HOSTS = ['http://localhost:5000', 'http://192.168.171.200:5000'];
 const API_PATH = '/api/getHistory';
+/* 三个宿舍，固定顺序展示。和 dashboard 的总览表、a1/priority.js 的 NODE_ORDER 同序 */
+const NODE_NAMES = ['dorm-a', 'dorm-b', 'dorm-c'];
 
-/* 「清空」的清零点：这个时刻之前的记录不再上屏，下拉刷新也不会自己回来，
-   下一条从 #1 重新数。存本地缓存而不是只放内存 —— 只放内存的话，
-   退出小程序再进来，旧记录又会被同步当成新数据全灌回来。
-   注意后端一条都没删：CSV 里的老数据完整保留，网页端、分析脚本照样看得到，
-   这里只是页面把这批记录划到了线外。判定语义与 web/script.js 的 clearedBefore 一致 */
-const CLEAR_KEY='dormmate.clearBefore';
-function getClearedBefore(){
-  try{return wx.getStorageSync(CLEAR_KEY)||'';}catch(e){return '';}
-}
-/* 后端行的 time 列在这三个字段名之间兜底，和下面 map 里的取法必须一致，
-   否则会出现「过滤用的是 A 字段、显示用的是 B 字段」这种对不上的情况 */
+/* 「清空」只清当前这一屏，后端一条都没删：CSV 里的记录完整保留，网页端、
+   分析脚本照样看得到，小程序这边下拉刷新或者重新编译（onLoad 会重新同步）
+   都会把整份历史重新拉回来。
+   早期版本不是这样 —— 它把「清空时刻」当清零点存进本地缓存，比这个时刻早的
+   记录永不再上屏，连重新编译都救不回来：点过一次清空，历史就一直是空的。
+   下面这个键只用于一次性清理，见 onLoad —— 老用户机器上还存着清零点，
+   虽然已经没人读它了，但留着会误导下一个读这段代码的人 */
+const LEGACY_CLEAR_KEY='dormmate.clearBefore';
+/* 后端行的 time 列在这三个字段名之间兜底，列表和上面那张卡片都走它，
+   免得一处认 time、一处认 date，同一条记录显示成两个时间 */
 function rowTime(item){return String((item&&(item.time||item.date||item['时间']))||'');}
 
 Page({
   data:{
     temp:'',humi:'',
     analysisResult:{bannerText:'等待输入...',bannerClass:'banner-normal',temp:'--',humi:'--',tempStatus:'--',humiStatus:'--',tempClass:'',humiClass:'',suggestions:['本次输入未通过校验，未生成分析结果。'],time:'--'},
-    historyList:[]
+    historyList:[],
+    nodeStatus:{list:[],updatedAt:''}
   },
-  onLoad(){this.fetchHistoryData();},
-  onPullDownRefresh(){this.fetchHistoryData(()=>wx.stopPullDownRefresh());},
+  onLoad(){
+    /* 清掉老版本遗留的清零点。现在没人读它了，但留着的话，
+       下次谁再按老思路写一版「清空后不再回来」，历史又会莫名其妙空掉 */
+    try{wx.removeStorageSync(LEGACY_CLEAR_KEY);}catch(e){}
+    this.fetchNodeStatus();
+    this.fetchHistoryData();
+  },
+  onPullDownRefresh(){
+    this.fetchNodeStatus();
+    this.fetchHistoryData(()=>wx.stopPullDownRefresh());
+  },
   onTempInput(e){this.setData({temp:e.detail.value});},
   onHumiInput(e){this.setData({humi:e.detail.value});},
 
@@ -86,6 +97,40 @@ Page({
     }
     res.bannerText=heads.length?heads.join('、')+'，建议按下方建议调整':'温湿度处于舒适区间，维持现状即可。';
     this.setData({analysisResult:Object.assign({},res,{temp:t,humi:h,time:timeText||getCurrentTime()})});
+  },
+
+  /* B4：宿舍实时状态卡。数据链 = Dashboard 收到 MQTT 报文 → POST app.py →
+     这里 GET。和历史分开拉、分开处理失败：历史拉不回来要弹提示（用户会以为数据丢了），
+     状态卡拉失败只在控制台记一行 —— 它只是「顺手看一眼」，
+     app.py 没起、看板还没报过，都不算错，卡片显示占位就行 */
+  fetchNodeStatus(){
+    let hostIdx=0;
+    const tryNext=()=>{
+      if(hostIdx>=API_HOSTS.length){console.warn('宿舍状态卡：连不上服务端，保持现有显示');return;}
+      wx.request({
+        url:API_HOSTS[hostIdx++]+'/api/nodeStatus',method:'GET',
+        success:(res)=>{
+          if(res.statusCode!==200||!res.data||typeof res.data.nodes!=='object'){return tryNext();}
+          const raw=res.data.nodes||{};
+          const list=NODE_NAMES.map(k=>{
+            const item=raw[k];
+            const t=parseFloat(item&&item.temperature),h=parseFloat(item&&item.humidity);
+            if(!Number.isFinite(t)||!Number.isFinite(h)){
+              return {name:k,temp:'--',humi:'--',statusText:'未上报',statusClass:'normal'};
+            }
+            /* 配色和状态文案都走本地 computeStatus —— 和服务端算的是同一套阈值，
+               结果不会打架；服务端也给了 status 就用它（口径以服务端为准） */
+            const st=computeStatus(t,h);
+            return {name:k,temp:t,humi:h,
+                    statusText:(item&&item.status)?String(item.status):st.text,
+                    statusClass:st.cls};
+          });
+          this.setData({nodeStatus:{list:list,updatedAt:res.data.updated_at||''}});
+        },
+        fail:()=>tryNext()
+      });
+    };
+    tryNext();
   },
 
   fetchHistoryData(callback){
@@ -138,13 +183,11 @@ Page({
         }
 
         console.log("web返回原始数据", res.data, url)
-        /* 清零点之前的行直接不进列表。这一道和上面那个序号守卫是两件事：
-           序号守卫挡的是「正在飞的这一次请求」，管不到下次刷新——
-           用户清空后再下拉一次，照样是全量数据灌回来。
-           想彻底不回来，就得把「清到哪一刻」记住并按它过滤 */
-        const clearedBefore=getClearedBefore();
-        const rows=clearedBefore?res.data.filter(item=>rowTime(item)>clearedBefore):res.data;
-        const list=rows.map((item,idx)=>{
+        /* 后端给多少行就上多少行，不再按清零点过滤（见文件顶部说明）。
+           序号守卫管的是「正在飞的这一次请求」，和过滤是两件事：
+           它保证清空后的那一下不会立刻被迟到的响应灌回来，
+           而下一次刷新是重新发起的请求，照常全量上屏 */
+        const list=res.data.map((item,idx)=>{
           let t=parseFloat(item.temperature||item.temp||item['温度']||0)||0;
           let h=parseFloat(item.humidity||item.humi||item['湿度']||0)||0;
           //判定和上面那张卡片共用 computeStatus，两处永远同源（原来各写一份，已经漂移过）
@@ -193,9 +236,9 @@ Page({
      清空之后下拉刷新也拉不回来数据。现在改成把序号推一格：
      旧请求作废，清空之后新发起的同步照常生效 */
   this.reqSeq=(this.reqSeq||0)+1;
-  /* 记下清零点，让「清空过的记录」在后续任何一次同步里都不再上屏（见 fetchHistoryData）。
-     清空后新产生的记录时间晚于它，照常显示，不会连新数据一起锁死 */
-  try{wx.setStorageSync(CLEAR_KEY,getCurrentTime());}catch(e){}
+  /* 只清这一屏，不记清零点（见文件顶部 LEGACY_CLEAR_KEY 的说明）：
+     下拉刷新或重新编译都会从后端重新拉全量历史。
+     宿舍实时状态卡也不动 —— 那是三间房「现在怎么样」，不是本地攒的记录 */
   },
 
   handleExportCSV(){

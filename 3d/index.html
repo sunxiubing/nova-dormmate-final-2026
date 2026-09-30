@@ -34,9 +34,9 @@
      /* flex-basis 100% 把提示挤到独立一行，不跟控件挤在同一行里换行错位 */
      #pubTip { flex-basis: 100%; margin: 0; font-size: 12px; opacity: .8; }
      #pubTip.is-error { color: #ffb4a8; opacity: 1; }
-     /* A1 横幅 + 处理动作：左上角（原来那组测试按钮的位置，按钮删掉后这里空出来了）。
+     /* A1 横幅：左上角（原来那组测试按钮的位置，按钮删掉后这里空出来了）。
         为什么不继续顶部居中：居中的话会被右上角的发布面板横向压住 —— 实测横幅 464px 宽
-        有 310px 盖在面板底下，而「用户的处理动作」正好在被盖的那一段里，等于白写。
+        有 310px 盖在面板底下，等于白写。
         z-index 仍低于发布面板：真撞上了也要保证发送按钮点得到
         position:fixed 是必需的 —— canvas 是脚本运行时 append 到 body 的，
         静态定位的元素会被它盖住（和上面两个面板同一个理由） */
@@ -51,14 +51,6 @@
      /* 没有异常宿舍时的灰态：还留在页面上（让人知道这块功能在），但不可点 */
      #a1Banner3d.is-idle { cursor: default; opacity: .5; }
      #a1Banner3d.is-idle:hover { background: rgba(48,40,30,.92); }
-     /* 第二行：用户最近一次处理动作。独立成行、独立更新 ——
-        原来是把处理状态章拼在优先横幅那一行里，只有「被操作的宿舍恰好等于当前最值得关注
-        的那个」才拼得上去；操作 dorm-a 而横幅显示 dorm-b 时，右边什么都看不到 */
-     #a1OpsText {
-         margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(107,90,62,.5);
-         font-size: 12px; opacity: .92;
-     }
-     #a1OpsText.is-empty { opacity: .5; }
      /* 趋势图面板：右下角。
         为什么放右下角：左上角是 A1 横幅、右上角是发布面板，只剩右下这块是空的。
         z-index 与发布面板同级（30），但两者一个贴顶一个贴底，高度再撑也不会撞上。
@@ -95,7 +87,6 @@
      点一下 = 跳到 dashboard 并自动选中那个宿舍（带上 ?node=） -->
 <div id="a1Banner3d">
     <div id="a1BannerText">当前无异常</div>
-    <div id="a1OpsText" class="is-empty">用户操作：暂无</div>
 </div>
 <!-- 趋势图：dashboard 的【查看DormX】和告警横幅都跳到这里（带 ?node=X），
      一页里同时给出「这个宿舍的曲线」和「这个宿舍的 3D 房间」 -->
@@ -743,47 +734,50 @@ if (typeof mqtt === 'undefined') {
 // 所以两个页面上的「最值得关注」必然一致 —— 各写一份的话迟早会分叉
 const A1 = window.DormMateA1;
 const a1Tracker = A1 ? A1.createTracker() : {};
-// 每个宿舍的处理状态章。3d 这边只是显示：状态的权威在 dashboard，
-// 它发 action 就是「处理中」，发 verdict 就是「已恢复 / 仍需关注」
-const opsChip = {};
 let bannerNode = null;   // 横幅上当前显示的宿舍，点击跳转要用
-// 横幅第二行「用户操作」的内容：最近一次处置动作（任何宿舍的都算，不限 A1 挑中的那个）。
-// 存下来是为了刷新/跳转回来还能看见刚才做了什么
-let lastOp = null;
+
+/* 处置状态：这一页只留一个状态词，够横幅说清「现在是什么状态」就行。
+   数据来自两处 —— 启动时从 dashboard 快照读一次（和 adoptDashboardState 同源），
+   之后由 ops 报文增量更新（action = 有人开始处置，verdict = 系统下了结论）。
+   不在这一页重造整套状态机：设备开关、处置轮次、结论依据都还在 dashboard 那边，
+   这里多存一份迟早会对不上。
+   同理保留期常量必须和 dashboard 的 VERDICT_HOLD_MS 一致，改那边记得回来改这里 */
+const VERDICT_HOLD_MS = 5 * 60 * 1000;
+const fsmOf3d = {};      // node -> {state, concludedAt}
+
+/* 状态词。异常段还在、没人处置过 = 需要关注；处置进行中 = 处置中；
+   刚下结论 = 已恢复 / 仍需关注（保留期内），过期就不再代表「现在」。
+   和 dashboard 的 stateWord 是同一把尺子，只是这边把「异常中」写成「需要关注」——
+   3d 回答的是「哪个空间需要我管」，dashboard 回答的是「这间房现在怎么了」 */
+function stateWordOf3d(node) {
+    const f = fsmOf3d[node];
+    if (!f) return '需要关注';
+    if (f.state === 'handling') return '处置中';
+    if (f.state === 'recovered' || f.state === 'attention') {
+        const held = Date.now() - (f.concludedAt || 0);
+        if (held < VERDICT_HOLD_MS) return f.state === 'recovered' ? '已恢复' : '仍需关注';
+    }
+    return '需要关注';
+}
+
+/* 横幅指谁：有异常宿舍就指它；异常段已经结束、结论还在保留期内的，指刚下结论的那一间。
+   和 dashboard 的 concludedNode 同一个道理 —— 用户刚处置完，3d 上该看得见「已恢复」，
+   而不是整条横幅缩回「当前无异常」，让人以为刚才那一下没生效 */
+function concludedNodeOf3d() {
+    const now = Date.now();
+    let best = null;
+    NODE3.forEach(function (n) {
+        const f = fsmOf3d[n];
+        if (!f) return;
+        if (f.state !== 'recovered' && f.state !== 'attention') return;
+        if (now - (f.concludedAt || 0) >= VERDICT_HOLD_MS) return;
+        if (!best || (f.concludedAt || 0) > (fsmOf3d[best].concludedAt || 0)) best = n;
+    });
+    return best;
+}
 // 最后一帧环境读数按宿舍各记一份（见上面 lastEnvOf），恢复历史时把三个宿舍
 // 都灌回去，切到哪个都不至于回到 25℃/60% 的初始配色
 const MODE_NAME = { study:'学习模式', sleep:'睡眠模式', away:'离寝模式' };
-
-// 把一条 action 报文说成人话：设备开关逐个列，模式单独接在后面。
-// 只列报文里真的带了的字段 —— dashboard 手动开关设备时 mode 是 null，
-// 硬编一句「保持学习模式」会凭空造出用户没做过的操作
-function describeAction(msg, d) {
-    const parts = [];
-    if (d.fan === true) parts.push('风扇已开启');
-    else if (d.fan === false) parts.push('风扇已关闭');
-    if (d.dehumidifier === true) parts.push('除湿机已开启');
-    else if (d.dehumidifier === false) parts.push('除湿机已关闭');
-    if (d.vent === true) parts.push('窗户已推开');
-    else if (d.vent === false) parts.push('窗户已关上');
-    if (d.light === true) parts.push('灯已开');
-    else if (d.light === false) parts.push('灯已关');
-    if (MODE_NAME[msg.mode]) parts.push('切换到' + MODE_NAME[msg.mode]);
-    if (msg.op && !parts.length) parts.push(String(msg.op));
-    return parts.length ? parts.join('、') : '已下发处置指令';
-}
-
-function renderOps() {
-    const el = document.getElementById('a1OpsText');
-    if (!el) return;
-    if (!lastOp) {
-        el.textContent = '用户操作：暂无';
-        el.classList.add('is-empty');
-        return;
-    }
-    const when = lastOp.ts ? new Date(lastOp.ts).toLocaleTimeString() : '';
-    el.textContent = '用户操作：' + (lastOp.node ? lastOp.node + ' ' : '') + lastOp.text + (when ? ' · ' + when : '');
-    el.classList.remove('is-empty');
-}
 
 // 房间配色（需求：学习=暖白、睡眠=暗蓝变暗、离寝=深灰）。
 // 全场景是 MeshBasicMaterial，不参加光照计算 —— 「变暗」没法靠调光实现，
@@ -856,12 +850,22 @@ function handleOpsMessage(topic, payload) {
     // 用户切回 A 才发现它的设备状态被人动过
     const target = opsByNode[node] || opsState;
     if (msg.kind === 'verdict') {
-        // 结论只改状态章，房间一动不动：风扇照样转、除湿机照样放大、房间照样是原来那个颜色。
+        // 结论到了房间一动不动：风扇照样转、除湿机照样放大、房间照样是原来那个颜色。
         // 这里曾经把设备全部交还给环境驱动 —— 结果是判「已恢复」的一瞬间，
-        // 用户刚开的设备被系统自己关了，看起来像是他点错了。要不要关是他自己的事
-        opsChip[node] = (msg.result === 'recovered') ? '已恢复' : '仍需关注';
-        lastOp = { node: node, text: (msg.result === 'recovered') ? '已处置，数据恢复正常' : '仍需关注', ts: Date.now() };
+        // 用户刚开的设备被系统自己关了，看起来像是他点错了。要不要关是他自己的事。
+        // 状态词要跟着变：「处置中」到这一刻结束，横幅改说「已恢复 / 仍需关注」。
+        // 结论依据（第几条报文、系统还是人工）不在这页讲，那是 dashboard 和复盘报告的细节
+        // 只认三个已知宿舍：报文里的 node 是外部字符串，不校验的话
+        // fsmOf3d 会攒出一堆谁也不读的键，还会被原样存进 localStorage
+        if (NODE3.indexOf(node) >= 0 && (msg.result === 'recovered' || msg.result === 'attention')) {
+            fsmOf3d[node] = { state: msg.result, concludedAt: Number(msg.ts) || Date.now() };
+        }
     } else if (msg.kind === 'action') {
+        // 有人开始处置 → 横幅从「需要关注」变「处置中」。
+        // 上一轮的结论同时作废：新的一轮处置开始了，旧结论不再代表现在
+        if (NODE3.indexOf(node) >= 0) {
+            fsmOf3d[node] = { state: 'handling', concludedAt: 0 };
+        }
         const d = msg.devices || {};
         if (typeof d.fan === 'boolean') target.fan = d.fan;
         // 通风 = 推开窗户，同一个开关的两种说法（dashboard 已无此按钮，外部指令仍可驱动）
@@ -871,47 +875,38 @@ function handleOpsMessage(topic, payload) {
         // 模式：手动开关设备之后 dashboard 会把 mode 置回 null，房间跟着回到原色
         target.mode = msg.mode || null;
         if (target === opsState) opsMode = target.mode;
-        // 状态章把「开着的设备」逐个列出来，风扇和除湿机都写清楚工作/停止
-        const on = [];
-        if (d.fan) on.push('风扇已开启');
-        if (typeof d.dehumidifier === 'boolean') {
-            on.push(d.dehumidifier ? '除湿机工作中' : '除湿机已停止');
-        }
-        opsChip[node] = '处理中' + (on.length ? '｜' + on.join('、') : '');
-        // 独立记一份「最近一次处理动作」给横幅第二行用。
-        // 不能复用上面的 opsChip：那份是按宿舍存的，横幅只显示 A1 挑出来的那个宿舍，
-        // 操作 dorm-a 而横幅正在显示 dorm-b 时，操作内容就整条看不见了
-        lastOp = { node: node, text: describeAction(msg, d), ts: Date.now() };
     } else {
         console.warn('[MQTT] 处置报文的 kind 无法识别，已丢弃：' + String(msg.kind));
         return;
     }
     applyOpsVisual();
     renderBanner();
-    renderOps();
     save3dState();
     console.log('[MQTT] 处置同步 ' + node + ' kind=' + msg.kind + ' 设备=' + JSON.stringify(msg.devices || {}));
 }
 
-// A1 横幅：显示当前最值得关注的宿舍 + 它的处理状态；没有异常就退成灰态。
-// 文案写进 #a1BannerText（内层那一行），绝不能写外层 #a1Banner3d 的 textContent ——
-// 那会把同在框里的「用户操作」那一行一起抹掉
+// A1 横幅：哪个空间需要我管，外加它现在是什么状态 —— 「dorm-b 需要关注」/
+// 「dorm-b 处置中」/「dorm-b 已恢复」。状态词跟着实际处置进度变，不是写死的一句。
+// B4：异常类型/次数/持续时长/趋势仍不在这页 —— 那是 dashboard 横幅和复盘报告的事，
+// 同一段信息复制到每个页面，看的人反而不知道哪页该看什么。
+// 想知道「怎么了、处理到哪一步」，点横幅带着 ?node= 跳回 dashboard
 function renderBanner() {
     const el = document.getElementById('a1Banner3d');
     const line = document.getElementById('a1BannerText');
     if (!el || !line) return;
     const result = A1 ? A1.pick(a1Tracker, Date.now()) : null;
-    if (!result || !result.node) {
+    const node = (result && result.node) || concludedNodeOf3d();
+    if (!node) {
         line.textContent = '当前无异常';
         el.classList.add('is-idle');
         bannerNode = null;
         return;
     }
-    bannerNode = result.node;
-    let text = '最值得关注：' + A1.describe(result).text;
-    if (opsChip[result.node]) text += '｜' + opsChip[result.node];
-    line.textContent = text;
-    el.classList.remove('is-idle');
+    const word = stateWordOf3d(node);
+    bannerNode = node;
+    line.textContent = node + ' ' + word;
+    // 已恢复不是警报，压暗一档；其余状态（需要关注/处置中/仍需关注）都还要人管
+    el.classList.toggle('is-idle', word === '已恢复');
 }
 
 const bannerEl = document.getElementById('a1Banner3d');
@@ -1149,6 +1144,23 @@ function adoptDashboardState() {
         dst.light = !!d.light;
         dst.mode = MODE_NAME[d.mode] ? d.mode : null;
     });
+    // 处置状态：dashboard 快照里的 fsm 是权威（字段名 state / concludedAt）。
+    // 双向都听它的 —— 那边写着 idle 就是「没有处置在进行」，3d 自己存档里的旧结论
+    // 这时候必须让位，否则 dashboard 已经开了新一轮异常，3d 横幅还挂着上一轮的「已恢复」
+    if (s.fsm && typeof s.fsm === 'object') {
+        NODE3.forEach(function (node) {
+            const f = s.fsm[node];
+            if (!f || typeof f !== 'object') return;
+            if (f.state !== 'handling' && f.state !== 'recovered' && f.state !== 'attention') {
+                delete fsmOf3d[node];
+                return;
+            }
+            fsmOf3d[node] = {
+                state: f.state,
+                concludedAt: Number.isFinite(f.concludedAt) ? f.concludedAt : 0
+            };
+        });
+    }
 }
 
 // ===================== 10.5 持久化：刷新 / 离开再回来，页面不回到原样 =====================
@@ -1167,9 +1179,12 @@ function save3dState() {
         envByNode: lastEnvOf,
         ops: { fan: opsState.fan, vent: opsState.vent, dehumidifier: opsState.dehumidifier,
                light: opsState.light, mode: opsMode },
-        lastOp: lastOp,
         lastEnv: lastEnvOf[shownNode],   // 旧字段，留给旧版本读；新版本读 envByNode
-        a1: a1Tracker
+        a1: a1Tracker,
+        // 横幅上那个状态词（处置中 / 已恢复 / 仍需关注）。
+        // 不存的话，处置到一半刷新页面，横幅会从「处置中」退回「需要关注」，
+        // 看起来像是刚才那一下没生效
+        fsm3d: fsmOf3d
     };
     try {
         localStorage.setItem(STORE_KEY_3D, JSON.stringify(payload));
@@ -1249,11 +1264,6 @@ function restore3dState() {
         readEnv(trendNode, s.lastEnv);
     }
 
-    if (s.lastOp && typeof s.lastOp === 'object' && typeof s.lastOp.text === 'string') {
-        lastOp = { node: String(s.lastOp.node || ''), text: s.lastOp.text,
-                   ts: Number.isFinite(s.lastOp.ts) ? s.lastOp.ts : null };
-    }
-
     // 异常计数与计时：只认三个宿舍，每条按 {abnormalSince,count,kind} 的形状重建
     if (A1 && s.a1 && typeof s.a1 === 'object') {
         Object.keys(a1Tracker).forEach(function (n) { delete a1Tracker[n]; });
@@ -1264,6 +1274,19 @@ function restore3dState() {
                 abnormalSince: Number.isFinite(e.abnormalSince) ? e.abnormalSince : null,
                 count: Number.isFinite(e.count) && e.count > 0 ? e.count : 0,
                 kind: (typeof e.kind === 'string' && A1.ALERT_TEXT[e.kind]) ? e.kind : null
+            };
+        });
+    }
+
+    // 横幅上的状态词。存档里的 state 同样是不可信输入，只认三种已知值
+    if (s.fsm3d && typeof s.fsm3d === 'object') {
+        NODE3.forEach(function (n) {
+            const f = s.fsm3d[n];
+            if (!f || typeof f !== 'object') return;
+            if (f.state !== 'handling' && f.state !== 'recovered' && f.state !== 'attention') return;
+            fsmOf3d[n] = {
+                state: f.state,
+                concludedAt: Number.isFinite(f.concludedAt) ? f.concludedAt : 0
             };
         });
     }
@@ -1301,7 +1324,6 @@ applyOpsVisual();          //房间配色、台灯按恢复出来的模式重刷
 applyQueryNode();          //?node= 是更明确的意图，压过历史里记的那个节点
 setTrendNode(trendNode);
 renderTabs();
-renderOps();
 renderBanner();
 save3dState();             //把恢复后的状态再写一次：字段被校验丢弃时以页面实际状态为准
 

@@ -1398,12 +1398,31 @@ var MEDIA_FIELD = { photo: 'photo_name', video: 'video_name', audio: 'audio_name
     }
     speaking = false;
     currentUtterance = null;
+    clearSpeakWatchdog();
+    /* 念完了 = 已经送到耳朵里，那句开场简报不用再补了。
+       （不靠 onstart 一个信号：有的浏览器 onstart 会迟到甚至不来，onend 到了
+       就说明这句真的走完了，比 onstart 更硬。）cancel 掉的那次上面已经拦住了，
+       不会走到这儿把没念成的当成念成了 */
+    if (!event || event.type !== 'error') {
+      openingBrief = null;
+    }
+    /* onerror 是另一条「没出声」的路：onstart 来过了（浏览器没拦），
+       但系统里没有能用的中文音色 / 语音服务挂了 —— 引擎会回过来说一声。
+       不写出来的话，用户听到的仍然是「一片安静」 */
+    if (event && event.type === 'error') {
+      var code = event.error || '';
+      setStatus('语音没能播出来（' + (code || '引擎报错') +
+                '）：浏览器或系统缺少可用的中文语音。', true);
+    }
   }
 
   function stopSpeaking() {
     /* speechSynthesis.cancel() 不触发 onend，speaking 必须手动清 */
     speaking = false;
     currentUtterance = null;
+    // 主动取消不等于被浏览器拦下：不撤掉兜底计时器的话，
+    // 1.5 秒后会凭一个已经作废的 utterance 报「语音没能播出来」
+    clearSpeakWatchdog();
     try {
       if (win.speechSynthesis) {
         win.speechSynthesis.cancel();
@@ -1411,8 +1430,49 @@ var MEDIA_FIELD = { photo: 'photo_name', video: 'video_name', audio: 'audio_name
     } catch (err) { /* 忽略 */ }
   }
 
-  function speak(text) {
+  /* 「调用过 speak()」和「真的出声了」是两件事。
+     浏览器拦下自动播放（页面从没被点过）、系统没装中文音色、语音服务不可用，
+     这几种情况下 speak() 不抛错、也不出声 —— 唯一的迹象是 onstart 一直不来。
+     以前这里完全静默，用户只能靠「有没有听见」猜，把功能已生效和功能没生效
+     混成同一个现象。现在给它一个兜底：等不到 onstart 就说清楚为什么，
+     并且把这一条留着，等页面被点过之后自动补播 */
+  var SPEECH_WATCHDOG_MS = 1500;
+  var speakWatchdog = null;
+  var speechStarted = false;
+
+  function clearSpeakWatchdog() {
+    if (speakWatchdog) {
+      clearTimeout(speakWatchdog);
+      speakWatchdog = null;
+    }
+  }
+
+  function onSpeechBlocked() {
+    speaking = false;          /* 没出声就不能一直占着「正在播」的位子，否则语音识别被永久抑制 */
+    currentUtterance = null;
+    /* 关键：把那一份从引擎的播放队列里撤掉。
+       被拦下不等于被丢弃 —— Chrome 把它放在队列里攒着，等页面被点过（允许
+       发声了）再一起念出来。重试几次就攒几份，用户点一下会听见同一句话念
+       好几遍。这里撤掉，队列里永远只剩「当前这一次」 */
+    try {
+      if (win.speechSynthesis) {
+        win.speechSynthesis.cancel();
+      }
+    } catch (err) { /* 忽略 */ }
+    var ua = win.navigator && win.navigator.userActivation;
+    if (ua && ua.hasBeenActive === false) {
+      setStatus('语音没能播出来：浏览器要求页面先有过一次点击，才允许自动发声 —— ' +
+                '在本页任意位置点一下，这条提醒会自动补播。', true);
+    } else {
+      setStatus('语音没能播出来：浏览器或系统没有可用的中文语音。点一下本页可以再试一次。', true);
+    }
+  }
+
+  /* onStart 是可选的：自动提醒靠它判断「真的播出去了没有」，
+     播出去了才把这条标记成已提醒，否则下一轮还会补 —— 见 pollAlert */
+  function speak(text, onStart) {
     if (!win.speechSynthesis || !win.SpeechSynthesisUtterance) {
+      setStatus('这台浏览器没有语音播报能力（speechSynthesis 缺失），只能看文字。', true);
       return;
     }
     if (speaking) {
@@ -1421,13 +1481,28 @@ var MEDIA_FIELD = { photo: 'photo_name', video: 'video_name', audio: 'audio_name
     var utterance = new win.SpeechSynthesisUtterance(text);
     /* 只设 lang，中文声音交给浏览器挑：页面刚加载时 getVoices() 通常还是空数组 */
     utterance.lang = 'zh-CN';
+    utterance.onstart = function () {
+      /* 上一次尝试被中止后，它的 onstart 仍可能迟到 —— 那声不是这一次的，
+         算到这一次头上就会把「已提醒」标记错、状态栏也跟着说错话 */
+      if (currentUtterance !== utterance) return;
+      speechStarted = true;
+      clearSpeakWatchdog();
+      if (onStart) onStart();
+    };
     utterance.onend = handleSpeechEnd;
     utterance.onerror = handleSpeechEnd;
     currentUtterance = utterance;
     speaking = true;
+    speechStarted = false;
+    clearSpeakWatchdog();
+    speakWatchdog = setTimeout(function () {
+      speakWatchdog = null;
+      if (!speechStarted) onSpeechBlocked();
+    }, SPEECH_WATCHDOG_MS);
     try {
       win.speechSynthesis.speak(utterance);
     } catch (err) {
+      clearSpeakWatchdog();
       speaking = false;
       currentUtterance = null;
     }
@@ -1492,6 +1567,226 @@ var MEDIA_FIELD = { photo: 'photo_name', video: 'video_name', audio: 'audio_name
     }
     setStatus('已朗读当前状态：' + text);
     speak(text);
+  }
+
+  /* ---------------- 「朗读提醒」话术（B4） ---------------- */
+
+  /* Dashboard 看板快照的键。和 dashboard/index.html 的 STORE_KEY、3d 的 DASH_KEY_3D
+     是同一份：语音要念的是「系统里现在最要紧的那件事」，不是本页手动敲进去的那条
+     读数（那是上面「朗读状态」的活）。
+     它要求 web 和 dashboard 同源打开（localStorage 才共享），3d 早就依赖同一前提；
+     从没打开过 Dashboard 就没有这份数据，只能照实说一句 */
+  var DASH_STORE_KEY = 'dormmate.dashboard.v1';
+
+  /* 结论的保留期，必须和 dashboard 的 VERDICT_HOLD_MS 一致：刚判完「已恢复」的
+     那几分钟里，看板横幅和这里说的得是同一件事。改那边记得回来改这一行 ——
+     这个常量属于看板的展示规则，不属于 A1 判定内核，所以没往 priority.js 里放 */
+  var VERDICT_HOLD_MS = 5 * 60 * 1000;
+
+  /* 从快照的 a1 字段重建 tracker。它的形状就是 a1Tracker（每节点
+     {abnormalSince,count,kind}）—— 这三个字段正是 pick 读取的全部，
+     所以可以直接摆出条目，不必走 feed（feed 会把起点改成「现在」）。
+     localStorage 是谁都能改的地方，逐项验过再喂给 pick：脏数据会算出
+     NaN 时长，播出来就是「已持续 NaN 分钟」 */
+  function readDashTracker(snapshot) {
+    var a1 = win.DormMateA1;
+    var tracker = a1.createTracker();
+    var saved = snapshot.a1;
+    if (!saved || typeof saved !== 'object') return tracker;
+    a1.NODE_ORDER.forEach(function (node) {
+      var e = saved[node];
+      if (!e || typeof e !== 'object') return;
+      var since = (typeof e.abnormalSince === 'number' && isFinite(e.abnormalSince) && e.abnormalSince > 0)
+        ? e.abnormalSince : null;
+      var kind = (typeof e.kind === 'string' && a1.ALERT_TEXT[e.kind]) ? e.kind : null;
+      if (since === null || kind === null) return;   // 正常段：不进候选集
+      var count = (typeof e.count === 'number' && isFinite(e.count)) ? Math.floor(e.count) : 1;
+      tracker[node] = { abnormalSince: since, count: Math.max(1, count), kind: kind };
+    });
+    return tracker;
+  }
+
+  /* 看板那边的状态词是「处理中｜风扇已开启 · …」，语音只要头三个字 */
+  function alertStateWord(state) {
+    if (state === 'handling') return '处理中';
+    if (state === 'recovered') return '已恢复';
+    if (state === 'attention') return '仍需关注';
+    return '异常中';
+  }
+
+  /* 快照里找「刚处置完、结论还在保留期内」的宿舍。A1.pick 只认还在异常段里的
+     节点，判完「已恢复」它就落选了 —— 而这几分钟恰恰是用户最想听一句结果的时候 */
+  function recentVerdict(snapshot) {
+    var fsm = snapshot.fsm;
+    if (!fsm || typeof fsm !== 'object') return null;
+    var found = null;
+    win.DormMateA1.NODE_ORDER.forEach(function (node) {
+      var f = fsm[node];
+      if (!f || typeof f !== 'object') return;
+      if (f.state !== 'recovered' && f.state !== 'attention') return;
+      var at = Number(f.concludedAt) || 0;
+      if (Date.now() - at >= VERDICT_HOLD_MS) return;   // 过期结论不算「当前提醒」
+      if (!found || at > (Number(fsm[found].concludedAt) || 0)) found = node;
+    });
+    return found;
+  }
+
+  /* 完整话术。要说出口的句子一律避开「提醒」二字 —— TTS 的尾音被麦克风收回去
+     会再触发一次指令（「清空历史」的回话避原词是同一个先例）；
+     setStatus 是给人看的，可以出现原词 */
+  function buildAlertSpeech() {
+    var a1 = win ? win.DormMateA1 : null;
+    if (!a1) return '判定内核未加载，无法朗读。';
+    var raw = null;
+    try { raw = win.localStorage.getItem(DASH_STORE_KEY); } catch (err) { return '读取看板数据失败。'; }
+    if (!raw) return '看板数据不存在，请先打开 Dashboard 页面。';
+    var snapshot = null;
+    try { snapshot = JSON.parse(raw); } catch (err) { return '看板数据已损坏。'; }
+    if (!snapshot || typeof snapshot !== 'object') return '看板数据已损坏。';
+
+    var store = (snapshot.store && typeof snapshot.store === 'object') ? snapshot.store : {};
+    var result = a1.pick(readDashTracker(snapshot), Date.now());
+    var node = result.node || recentVerdict(snapshot);
+    if (!node) return '当前没有需要关注的事项。';
+
+    var fsm = snapshot.fsm && snapshot.fsm[node];
+    var word = result.node
+      ? alertStateWord(fsm && fsm.state)
+      : ((fsm && fsm.state === 'recovered') ? '已恢复' : '仍需关注');
+
+    /* 趋势看哪一维由异常类型决定。还在异常段里就用它当前的类型；
+       已经判完的那一段，用上一帧读数反推当时是什么异常 ——
+       A1.kindOf 用的是同一套阈值，不用在这里另抄一份 18/30/75 */
+    var cur = store[node];
+    var prev = (cur && typeof cur === 'object') ? cur.prev : null;
+    var kind = result.node ? result.kind : (prev ? a1.kindOf(prev.temperature, prev.humidity) : null);
+    var trend = a1.trendText(kind, prev, cur);
+    return node + '，' + word + (trend ? '，' + trend : '') + '。';
+  }
+
+  function readAlert() {
+    var text = buildAlertSpeech();
+    setStatus('已朗读提醒：' + text);
+    speak(text);
+  }
+
+  /* ---------------- B4：语音提醒（不等用户问，自己播） ----------------
+     上面那个「朗读提醒」是用户主动问一句答一句，这一节是反过来：看板那边
+     新出现一段异常、或者刚下了处置结论，这边主动念出来 —— 「语音提醒」这
+     四个字要能兑现成真的会响，而不是等人来查。
+
+     数据来源和「朗读提醒」完全一致：轮询看板写的 localStorage 快照。不新开
+     MQTT 连接 —— 那会变成第三个客户端，还要在这页再养一份判定状态，
+     迟早和看板说的不一致。代价是要求两页同源且看板开着（已写进 README 已知限制）。
+
+     每 2.5 秒看一眼快照，只在**第一次能看到快照时**念一遍当前情况，攒成一句：
+       当前有 3 处需要关注：dorm-a 高温、dorm-b 高温、dorm-c 低温偏湿。
+     念完就不再主动出声 —— 之后再来多少条报文、再出多少结论都不念。
+     想听就问一句「朗读提醒」，那是用户主动要的，随时答。
+
+     早先的版本是「只播报变化」：页面打开时不念（怕一进页面就开口吓人），
+     之后每出现一段新异常或结论才念。问题是这样一进页面根本没声音 —— 三个
+     宿舍都在异常、状态栏也照实写着，页面却全程静音，用户只能得出「这功能
+     没生效」；异常一直不结束的话，永远等不到「变化」，就永远不会开口。
+     一遍定音的代价是「处置结论出来了也不吭声」，用户已知悉并选了这个。 */
+  var ALERT_POLL_MS = 2500;
+  var briefDone = false;   // 这次打开已经报过了（没东西可报也算报过），从此不再出声
+  var openingBrief = null; // 还没念出去的那一句；念不出去就一直留着，等用户点页面补播
+  var briefTried = false;  // 定时轮询已经试过一回了，别攒队列
+
+  function currentAlerts(snapshot) {
+    var a1 = win.DormMateA1;
+    var out = [];
+    var saved = snapshot.a1;
+    if (saved && typeof saved === 'object') {
+      a1.NODE_ORDER.forEach(function (node) {
+        var e = saved[node];
+        if (!e || typeof e !== 'object') return;
+        var since = Number(e.abnormalSince);
+        if (!isFinite(since) || since <= 0) return;
+        var kind = (typeof e.kind === 'string' && a1.ALERT_TEXT[e.kind]) ? e.kind : null;
+        var label = a1.typeText(kind) || '异常';
+        out.push({
+          short: node + ' ' + label,          // 攒成一句念的时候用
+          text: node + '，' + label + '，需要关注。'
+        });
+      });
+    }
+    var fsm = snapshot.fsm;
+    if (fsm && typeof fsm === 'object') {
+      a1.NODE_ORDER.forEach(function (node) {
+        var f = fsm[node];
+        if (!f || typeof f !== 'object') return;
+        if (f.state !== 'recovered' && f.state !== 'attention') return;
+        var at = Number(f.concludedAt) || 0;
+        if (!at) return;
+        // 保留期和「朗读提醒」同一把尺子：过了期的结论不再是「当前提醒」，
+        // 半路上打开页面不该被一条十分钟前的旧结论提醒一次
+        if (Date.now() - at >= VERDICT_HOLD_MS) return;
+        // 结论带上趋势，用户能听出数据在往哪边走（温度正在下降 / 湿度正在上升）
+        var cur = snapshot.store && snapshot.store[node];
+        var prev = (cur && typeof cur === 'object') ? cur.prev : null;
+        var kind = prev ? a1.kindOf(prev.temperature, prev.humidity) : null;
+        var trend = a1.trendText(kind, prev, cur);
+        var word = f.state === 'recovered' ? '已恢复' : '仍需关注';
+        out.push({
+          short: node + ' ' + word,
+          text: node + '，' + word + (trend ? '，' + trend : '') + '。'
+        });
+      });
+    }
+    return out;
+  }
+
+  /* fromGesture=true 表示这一次是用户点页面触发的（浏览器刚给了发声许可，
+     见下面的 click 监听），只有这种时候才允许重试那一句没念出去的简报 */
+  function pollAlert(fromGesture) {
+    var a1 = win ? win.DormMateA1 : null;
+    if (!a1 || !win.localStorage) return;
+    var raw = null;
+    try { raw = win.localStorage.getItem(DASH_STORE_KEY); } catch (err) { return; }
+    if (!raw) return;
+    var snapshot = null;
+    try { snapshot = JSON.parse(raw); } catch (err) { return; }
+    if (!snapshot || typeof snapshot !== 'object') return;
+
+    /* 这一句攒好之后就一直留着，直到真的念出去为止。
+       留着是必要的：被浏览器拦下（页面还没被点过）时它念不出去，
+       要等用户点页面的那一下 —— 那正是浏览器开始允许发声的时刻 */
+    if (!openingBrief) {
+      if (briefDone) return;   // 这次打开已经报过了，之后不再出声
+      briefDone = true;
+      var list = currentAlerts(snapshot);
+      if (list.length) {
+        // 攒成一句：三条逐条念要念三遍，听的人等不起
+        openingBrief = '当前有 ' + list.length + ' 处需要关注：' +
+          list.map(function (a) { return a.short; }).join('、') + '。';
+        setStatus('语音提醒：' + openingBrief);
+      }
+    }
+    if (!openingBrief) return;
+
+    /* 定时轮询只试一次，之后老老实实等用户点页面 —— 不这么办的话，没被点过的
+       页面上每 2.5 秒就重试一次，而重试并不等于重放：引擎会把每次尝试都排进
+       队列攒着，用户点一下听见的是同一句话念好几遍（真机上就是这样） */
+    if (briefTried && !fromGesture) return;
+    briefTried = true;
+
+    /* 上一句「真的出声了」才让位：speak 是「后说的覆盖先说的」，硬插队会把
+       正在念的一句掐断。但只出声一半不算数 —— 被浏览器拦下的那一次，speaking
+       也是 true，要等 1.5 秒兜底计时器才松开。这期间用户点了页面（浏览器从此
+       允许发声），若把「没出声的那一次」也当成占线，补播就会被挡在门外，
+       点多少下都没反应 */
+    if (speaking && speechStarted) return;
+    /* 清掉 openingBrief 的时机是 onstart，不是这里 —— 提前清掉的话，被拦下
+       就再也不会补播了；状态栏的同一个道理：先写成「语音提醒：…」，会盖掉
+       上一条「没能播出来」的原因，用户看到的又是「说过了」，而什么都没听见 */
+    var brief = openingBrief;
+    speak(brief, function () {
+      openingBrief = null;
+      // 说出口的句子一律避开「提醒」二字：TTS 尾音被麦克风收回会再触发一次指令
+      setStatus('语音提醒：' + brief);
+    });
   }
 
   /* ---------------- 「分析环境」话术 ---------------- */
@@ -1817,6 +2112,9 @@ var MEDIA_FIELD = { photo: 'photo_name', video: 'video_name', audio: 'audio_name
        speak() 是 cancel-and-replace，后说的胜出，所以朗读必须排在后面才会成为最终播报 */
     { key: '拍照', run: takeSnapshot, label: '拍照' },
     { key: '朗读状态', run: readStatus, label: '朗读状态' },
+    /* B4：读的是看板快照里「当前最值得关注的那件事」，与「朗读状态」
+       （读本页手动录入的那条）分工不同。两个命令不互为子串，匹配不会打架 */
+    { key: '朗读提醒', run: readAlert, label: '朗读提醒' },
     { key: '分析环境', run: readEnvironment, label: '分析环境' },
     { key: '清空历史', run: clearHistory, label: '清空历史' },
     { key: '导出csv', run: exportCsvByVoice, label: '导出csv' },
@@ -1846,6 +2144,10 @@ var MEDIA_FIELD = { photo: 'photo_name', video: 'video_name', audio: 'audio_name
     }
 
     isRunningCommand = true;
+    /* 用户就在跟前说话，还没念出去的开场简报就此作废：两条播报都在抢同一个
+       喇叭，留着它，下一轮轮询会用简报盖掉用户刚要的那句话（cancel-and-replace
+       后说的胜出）。用户的指令永远优先于系统自己攒的那句 */
+    openingBrief = null;
     /* 一句话里说了多条就都执行。原来「拍照+朗读状态」就是这个行为
        （朗读最后播、cancel-and-replace 让它胜出），改成表格后不能丢 */
     matched.forEach(function (command) {
@@ -1949,7 +2251,7 @@ var MEDIA_FIELD = { photo: 'photo_name', video: 'video_name', audio: 'audio_name
     manualStop = false;
     listening = true;
     setButton(true);
-    setStatus('正在监听，可说「朗读状态」「分析环境」「拍照」「查看历史」等指令。');
+    setStatus('正在监听，可说「朗读状态」「朗读提醒」「分析环境」「拍照」「查看历史」等指令。');
     try {
       makeRecognition().start();
     } catch (err) {
@@ -1989,6 +2291,15 @@ var MEDIA_FIELD = { photo: 'photo_name', video: 'video_name', audio: 'audio_name
   if (recordBtn) {
     recordBtn.addEventListener('click', onRecordToggle);
   }
+
+  /* 语音提醒的轮询也在这里起，同样在 SR 守卫之前：
+     播报走的是 TTS，跟语音识别没关系 —— 浏览器不给识别能力（或者识别服务连不上），
+     「异常了主动喊一声」这件事照样该工作 */
+  setInterval(pollAlert, ALERT_POLL_MS);
+
+  /* 用户点一下页面 = 浏览器从此允许自动发声。立刻补播那一句 ——
+     必须由手势来触发（fromGesture），引擎才认这份许可 */
+  win.addEventListener('click', function () { pollAlert(true); });
 
   if (!SR) {
     setStatus('当前浏览器不支持语音识别，请使用 Chrome 或 Edge 浏览器（录音功能仍可用）。', true);

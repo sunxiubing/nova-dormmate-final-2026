@@ -127,7 +127,10 @@
           <button class="voice__btn" id="voice-record-btn" type="button">开始录音</button>
         </div>
 
-        <p class="voice__hint">语音指令：「朗读状态」「拍照」「分析环境」「清空历史」「导出csv」「查看历史」「开始录音」「停止录音」</p>
+        <p class="voice__hint">语音指令：「朗读状态」「朗读提醒」「拍照」「分析环境」「清空历史」「导出csv」「查看历史」「开始录音」「停止录音」</p>
+        <!-- 提醒是主动的：不用等到有人来问。写在这里是因为「语音提醒」四个字
+             只有说出来才生效的话，用户会以为这个功能根本不存在 -->
+        <p class="voice__hint">语音提醒（不用点任何按钮，也不要求先开始监听）：看板那边新出现异常、或刚判完处置结论时会自动播报一句。前提是本页与 Dashboard 同源打开、且 Dashboard 至少收到过一条报文 —— 提醒读的就是看板存下的那份快照。</p>
 
         <div class="voice__panel">
           <p class="voice__transcript" id="voice-transcript" aria-live="polite">点击「开始语音监听」后，请说出指令…</p>
@@ -141,6 +144,10 @@
    
   </div>
 
+  <!-- A1 判定内核：只有「朗读提醒」用得上（读 Dashboard 的快照，共用同一套优先判定，
+       不在这里另抄一份阈值）。必须排在 script.js 前面 —— 语音模块启动时就要拿到
+       window.DormMateA1，顺序反了会读成 undefined -->
+  <script src="../a1/priority.js"></script>
   <script src="script.js"></script>
 
  

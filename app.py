@@ -15,10 +15,13 @@
   GET  /media/<filename> 回放/回看媒体文件
   POST /api/eventLog     A1~A4 事件闭环的一行事件（dashboard 实时上报）
   GET  /api/eventLog     读全部事件，给 analysis.py 的事件复盘和页面排查用
+  POST /api/nodeStatus   B4 看板快照：三宿舍最新读数（dashboard 每条报文上报一次）
+  GET  /api/nodeStatus   B4 看板快照：小程序「宿舍实时状态」卡读它
 """
 import csv
 import json
 import os
+import threading
 from datetime import datetime
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -50,6 +53,13 @@ EVENT_HEADER = ["time", "node", "event_type", "alert", "op_text", "detail"]
 EVENT_TEXT_MAX = 100
 EVENT_TYPES = {"anomaly_start", "priority", "action", "reading", "verdict"}
 EVENT_NODES = {"dorm-a", "dorm-b", "dorm-c"}
+
+# B4 看板快照：dashboard 每收到一条报文，就把三个宿舍的最新读数报一份到这里，
+# 小程序的「宿舍实时状态」卡 GET 它。纯内存、进程重启即清空 ——
+# 这是「此刻三间房怎么样」的瞬时快照，不是历史；历史照旧走 CSV。
+# Flask 开发服务器是多线程的，读改写要加锁，不然两个请求同时到会丢更新
+NODE_STATUS = {}
+NODE_STATUS_LOCK = threading.Lock()
 
 # 扩展名白名单。上传口是唯一的外部输入点，这里只做白名单、不做「排除 .exe」那种反向过滤 ——
 # 反向过滤永远漏，白名单漏不了
@@ -205,6 +215,55 @@ def server_info():
         "csv_path": CSV_PATH,
         "media_dir": MEDIA_DIR,
     })
+
+
+@app.route("/api/nodeStatus", methods=["POST"])
+def set_node_status():
+    """B4 看板快照写入。dashboard 每条报文上报一次，body 形如
+    {"nodes": {"dorm-b": {"temperature": 26.8, "humidity": 56}}}。
+
+    只收它真实收到过报文的宿舍 —— 没收到的不报，比报一个占位符诚实：
+    小程序那边「未上报」和「26.8℃」是两件事。
+    status 由服务端重算，不信任客户端传的，和 /api/addRecord 一个规矩。
+    """
+    data = request.get_json(silent=True) or {}
+    nodes = data.get("nodes")
+    if not isinstance(nodes, dict) or not nodes:
+        return jsonify({"code": 1, "msg": "nodes 必须是非空的宿舍快照对象"}), 400
+
+    snapshot = {}
+    for node, item in nodes.items():
+        if node not in EVENT_NODES:
+            return jsonify({"code": 1, "msg": "node 只能是 dorm-a / dorm-b / dorm-c：%s" % node}), 400
+        if not isinstance(item, dict):
+            return jsonify({"code": 1, "msg": "%s 的读数必须是对象" % node}), 400
+        temp, err = parse_reading(item.get("temperature"), "温度", *TEMP_RANGE)
+        if err:
+            return jsonify({"code": 1, "msg": "%s：%s" % (node, err)}), 400
+        humi, err = parse_reading(item.get("humidity"), "湿度", *HUMI_RANGE)
+        if err:
+            return jsonify({"code": 1, "msg": "%s：%s" % (node, err)}), 400
+        snapshot[node] = {
+            "temperature": fmt_num(temp),
+            "humidity": fmt_num(humi),
+            "status": compute_status(temp, humi),
+        }
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with NODE_STATUS_LOCK:
+        NODE_STATUS.update(snapshot)
+        NODE_STATUS["_updated_at"] = now
+    return jsonify({"code": 0, "msg": "已更新", "time": now})
+
+
+@app.route("/api/nodeStatus", methods=["GET"])
+def get_node_status():
+    """B4 看板快照读取（小程序）。从没上报过时返回空 nodes —— 200 而不是 404：
+    小程序把非 200 当「服务异常」弹提示，而「看板还没报过」是正常状态不是故障。"""
+    with NODE_STATUS_LOCK:
+        nodes = {k: v for k, v in NODE_STATUS.items() if k in EVENT_NODES}
+        updated_at = NODE_STATUS.get("_updated_at")
+    return jsonify({"code": 0, "nodes": nodes, "updated_at": updated_at})
 
 
 @app.route("/api/addRecord", methods=["POST"])

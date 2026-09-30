@@ -13,6 +13,10 @@
 A4 事件复盘：报告里的【事件复盘】板块读的是事件日志（默认 --csv 同目录的
 events.csv，由 app.py 的 /api/eventLog 写入）。没有这个文件时板块显示
 「暂无事件」，不影响正常报告生成。
+
+B3 今日摘要：报告开头的【今日摘要】把事件日志里最新一天的内容整理成一段人话
+（谁出了问题、做了什么、结果怎样），同样只读事件日志 —— 摘要里的每一句都是
+按事件数据现算的，没有写死的文案，换一份事件日志跑一次就整段变。
 """
 
 from __future__ import annotations
@@ -89,6 +93,28 @@ NUMBER_PATTERN = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
 STATE_NORMAL = "正常"
 TEMP_LABELS = {"cold": "偏冷", "hot": "偏热", "normal": STATE_NORMAL}
 HUMIDITY_LABELS = {"wet": "偏湿", "normal": STATE_NORMAL}
+
+# ---------------- 今日摘要（B3）----------------
+# 摘要按宿舍逐条点名，所以需要一份「系统监测哪些宿舍」的名单。
+# 与 app.py 的 EVENT_NODES 一致：那份名单管着哪些 node 能写进事件日志，
+# 这里管着摘要里出现哪几行，改动时要同步。
+KNOWN_NODES = ("dorm-a", "dorm-b", "dorm-c")
+
+# 一天的时段划分。摘要里说的是「下午发生 1 次」，不是「14:12 发生 1 次」——
+# 摘要是给人一眼扫过去用的，时刻留给下面的明细表。每个时段取 [起, 止) 小时。
+DAY_PARTS = ((0, 6, "凌晨"), (6, 12, "上午"), (12, 18, "下午"), (18, 24, "晚间"))
+
+# 异常类型在摘要里的说法。状态原文五种取值（见 app.py 的 compute_status）：
+# 偏冷 / 偏热 / 偏湿 / 偏冷+偏湿 / 偏热+偏湿。
+# 温度类前面缀「持续」、湿度类不缀，是照着需求给的示例文案定的：
+# 「持续偏热」「偏湿」—— 同一句摘要里两种说法并存不是笔误
+SUMMARY_CONDITIONS = {
+    "偏冷": "持续偏冷",
+    "偏热": "持续偏热",
+    "偏湿": "偏湿",
+    "偏冷+偏湿": "持续偏冷偏湿",
+    "偏热+偏湿": "持续偏热偏湿",
+}
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTDIR = ROOT / "report"
@@ -517,15 +543,7 @@ def event_detail_text(event) -> str:
         return text
 
     if kind == "action":
-        if detail.get("mode"):
-            action = "切换到" + MODE_LABELS.get(detail["mode"], str(detail["mode"]))
-        elif detail.get("op") in DEVICE_LABELS:
-            on = (detail.get("devices") or {}).get(detail["op"])
-            action = f"{'开启' if on else '关闭'}{DEVICE_LABELS[detail['op']]}"
-        elif detail.get("op"):
-            action = str(detail["op"])
-        else:
-            action = "设备操作"
+        action = action_text(detail)
         devices = devices_text(detail.get("devices"))
         text = f"{action} · 当前：{devices}"
         if detail.get("src") == "external":
@@ -559,6 +577,22 @@ def event_detail_text(event) -> str:
     return json.dumps(detail, ensure_ascii=False)
 
 
+def action_text(detail) -> str:
+    """一条处置操作的 detail → 「开启风扇」这样一句短语。
+
+    复盘板块和今日摘要都从这里取文案：同一次操作在两处写成两个样子，
+    读的人得先做一次翻译才知道说的是同一件事
+    """
+    if detail.get("mode"):
+        return "切换到" + MODE_LABELS.get(detail["mode"], str(detail["mode"]))
+    if detail.get("op") in DEVICE_LABELS:
+        on = (detail.get("devices") or {}).get(detail["op"])
+        return f"{'开启' if on else '关闭'}{DEVICE_LABELS[detail['op']]}"
+    if detail.get("op"):
+        return str(detail["op"])
+    return "设备操作"
+
+
 def duration_text(ms) -> str:
     """毫秒 → 「7 分钟」这种粗粒度说法：复盘读的是量级，不是毫秒。"""
     total_min = int(ms) // 60000
@@ -568,6 +602,209 @@ def duration_text(ms) -> str:
         return f"{total_min} 分钟"
     hours, minutes = divmod(total_min, 60)
     return f"{hours} 小时 {minutes} 分钟" if minutes else f"{hours} 小时"
+
+
+# ---------------------------------------------------------------- 今日摘要（B3）
+def day_of(events):
+    """事件日志里最新的一天（date）。没有一条能解析出时间的就返回 None。
+
+    「今日」由数据决定，不取系统当前日期 —— 报告读的是哪份日志，摘要就写哪一天。
+    取系统时钟的话，隔天再打开同一份报告，摘要会声称「今天」什么都没发生
+    """
+    days = [e["time"].date() for e in events if e["time"] is not None]
+    return max(days) if days else None
+
+
+def part_of_day(when) -> str:
+    """小时 → 时段名。DAY_PARTS 从 0 点铺到 24 点，取不到只可能是这张表被改出了空档"""
+    for start, end, name in DAY_PARTS:
+        if start <= when.hour < end:
+            return name
+    return "时间不详时段"
+
+
+def episode_condition(ep) -> str:
+    """这一段的异常类型说法。取不到就返回「异常」，不猜具体类型。
+
+    优先用 anomaly_start 里记的 status —— 那是异常发生当时服务端算出的判定，
+    比后面拿处置动作去倒推准确。缺了它才退回第一条 reading 的 status
+    """
+    heads = [e for e in ep["events"] if e["event_type"] == "anomaly_start"]
+    if not heads:
+        heads = [e for e in ep["events"] if e["event_type"] == "reading"]
+    for event in heads:
+        status = (event["detail"] or {}).get("status")
+        # 「正常」不能当异常类型用：处置后的 reading 记的就是正常，
+        # 放它过去就会写出「发生 1 次正常」这种句子。认不出的类型照原样印，
+        # 结构变了要能看出来，而不是被悄悄换成「异常」
+        if status and status != STATE_NORMAL:
+            return SUMMARY_CONDITIONS.get(status, str(status))
+    return "异常"
+
+
+def episode_action(ep):
+    """这一段里用户做了什么，返回 (动作说法, 该动作发生的时刻)。
+
+    返回时刻是为了算「开启风扇后 40 分钟恢复」的用时 —— 需求示例里的时长是从
+    动作算起的，不是从异常开始算起。用户花多久才处置不该记在处置效果的账上。
+
+    多个动作时按时间取最早的那个：总结一句「做了什么」够了，把三次操作
+    全列出来就成了流水账，完整过程在下面的明细表里
+    """
+    actions = []
+    for event in ep["events"]:
+        if event["event_type"] != "action":
+            continue
+        detail = event["detail"]
+        if detail is None:
+            # detail 坏掉的行还有 op_text 这一列人读文本可用，兜一下。
+            # 「· 外部指令」是 dashboard 拼上去的来源后缀（见 onOpsMessage），
+            # 摘要要的是一句通顺的话，这个后缀塞在句子里会读成「外部指令后 40 分钟恢复」
+            text = event["op_text"].split(" · ")[0].strip()
+            if text:
+                actions.append((event["time"], text))
+            continue
+        actions.append((event["time"], action_text(detail)))
+
+    if not actions:
+        return None, None
+    actions.sort(key=lambda item: (item[0] is None, item[0] or datetime.min))
+    return actions[0][1], actions[0][0]
+
+
+def span_text(ms) -> str:
+    """时长接在中文后面：数字前留空格（「后 40 分钟恢复」），
+    「不足 1 分钟」这种中文开头的说法不留（「后不足 1 分钟恢复」）。
+    与 event_detail_text 里「已持续」那处的处理一致。"""
+    span = duration_text(ms)
+    return (" " + span) if span[0].isdigit() else span
+
+
+def episode_facts(ep):
+    """一段异常事件的全部结论：摘要正文和明细表都读这一份，不各算各的。
+
+    两处各算一遍的下场是同一段事件在正文里说「40 分钟恢复」、在表里写「42 分钟」，
+    读的人只会怀疑整份报告。
+    """
+    state, cls = episode_state(ep)
+    action, action_time = episode_action(ep)
+    condition = episode_condition(ep)
+
+    verdicts = [e for e in ep["events"] if e["event_type"] == "verdict"]
+    last = verdicts[-1] if verdicts else None
+    result = (last["detail"] or {}).get("result") if last else None
+
+    # 用时：已恢复的按「处置动作 → 恢复」算（需求示例里的 40 分钟就是这么来的），
+    # 其余按「异常开始 → 结论」算。用户花多久才动手，不该记在处置效果的账上
+    span_ms = None
+    if last and last["time"]:
+        base = action_time if (cls == "ok" and action_time) else ep["start"]
+        if base and last["time"] >= base:
+            span_ms = (last["time"] - base).total_seconds() * 1000
+
+    if result == "natural" or cls == "idle":
+        ending = "，未处置自行恢复"
+    elif cls == "ok":
+        # 已经判定恢复的，「处置后多久恢复」是这一段最值得记住的数字
+        ending = (f"，{action}后{span_text(span_ms)}恢复" if action and span_ms is not None
+                  else "，已恢复（未记录处置动作）")
+    elif cls == "warn":
+        ending = f"，{action}后仍未恢复" if action else "，仍未恢复"
+    elif cls == "pending":
+        ending = f"，{action}后仍在处置中" if action else "，仍在处置中"
+    else:
+        ending = f"，结果未知（{state}）"
+
+    return {
+        "node": ep["node"],
+        "start": ep["start"],
+        "bucket": part_of_day(ep["start"]) if ep["start"] else "时间不详时段",
+        "condition": condition,
+        "action": action,
+        "state": state,
+        "cls": cls,
+        # 表格里用不带前导空格的时长：单元格自己会撑开，「 40 分钟」前面多一格空白
+        # 看着像没对齐。前导空格是给正文里接在中文后面的（见 span_text）
+        "span": duration_text(span_ms) if span_ms is not None else "",
+        # 已恢复的用时是「处置后」用时，其余是「全程」用时 —— 表头得说清是哪个，
+        # 否则同一个数字在两行里代表两段不同的时间
+        "span_label": "处置后用时" if (cls == "ok" and action_time) else "全程用时",
+        "ending": ending,
+    }
+
+
+def episode_sentence(facts) -> str:
+    """一段异常事件 → 摘要里的一句话，例如
+    「下午发生 1 次持续偏热，开启风扇后 40 分钟恢复」。"""
+    return f"{facts['bucket']}发生 1 次{facts['condition']}{facts['ending']}"
+
+
+def episodes_of_day(events, day):
+    """挑出属于这一天的 episode，并剔除日志里没有任何内容、只剩空壳的段。"""
+    day_events = [e for e in events if e["time"] is not None and e["time"].date() == day]
+    episodes, ungrouped = group_episodes(day_events)
+
+    # episode 的存在只依赖 eid 这一个字段，所以日志里的手改行、坏行也会各自撑起一段。
+    # 一段里连一条能读懂的事件都没有的话，写进摘要就是凭空多报了一次事件
+    real = [ep for ep in episodes if any(e["event_type"] in EVENT_TYPE_LABELS for e in ep["events"])]
+    dropped = len(episodes) - len(real)
+    return real, ungrouped, dropped
+
+
+def build_daily_summary(events):
+    """把一天的事件记录整理成「今日摘要」，返回结构化结果，供报告和控制台共用。
+
+    没有事件时 summary 为空串而不是「今日无事」—— 那份事件日志里可能一行都没有，
+    说不清是这一天太平还是数据压根没记，把话留给调用方，别在这里替数据下结论
+    """
+    day = day_of(events)
+    if day is None:
+        # 键与下面的正常返回保持一致：调用方不必为「没有事件」这一种情况多加判断
+        return {"day": None, "summary": "", "lines": [], "nodes": [],
+                "total": 0, "need_attention": 0, "natural": 0, "ungrouped": 0, "dropped": 0}
+
+    episodes, ungrouped, dropped = episodes_of_day(events, day)
+
+    def by_start(ep):
+        return (ep["start"] is None, ep["start"] or datetime.min)
+
+    # 名单外的宿舍（日志里出现过但不属于监测名单）照样列出来，只是排在名单之后。
+    # 只认名单的话，一个没登记进 EVENT_NODES 的宿舍会整段消失 —— 摘要漏报比多报严重
+    order = list(KNOWN_NODES) + sorted({ep["node"] for ep in episodes} - set(KNOWN_NODES))
+
+    facts = [episode_facts(ep) for ep in sorted(episodes, key=by_start)]
+    by_node = {}
+    for item in facts:
+        by_node.setdefault(item["node"], []).append(item)
+
+    # 自行恢复的那几段不需要关注，不计入收尾的「N 次」——
+    # 需求示例里的 2 次，对应的是两次真正需要人去管的事件
+    natural = sum(1 for item in facts if item["cls"] == "idle")
+
+    lines, nodes = [], []
+    for node in order:
+        items = by_node.get(node, [])
+        if not items:
+            lines.append(f"{node} 全天整体正常")
+        else:
+            lines.extend(f"{node} {episode_sentence(item)}" for item in items)
+        nodes.append({"node": node, "healthy": not items, "items": items})
+
+    need_attention = len(facts) - natural
+    lines.append(f"今日共发生 {need_attention} 次需要关注的环境事件。" if need_attention
+                 else "今日无需要关注的环境事件。")
+
+    return {
+        "day": day,
+        "summary": "；".join(lines),
+        "lines": lines,
+        "nodes": nodes,
+        "total": len(facts),
+        "need_attention": need_attention,
+        "natural": natural,
+        "ungrouped": len(ungrouped),
+        "dropped": dropped,
+    }
 
 
 def devices_text(devices) -> str:
@@ -740,7 +977,72 @@ def render_events_section(events) -> str:
 
 
 # ---------------------------------------------------------------- 报告
-def render_report(records, stats, skipped, csv_path: Path, png_name: str, events=None) -> str:
+def render_summary_section(summary) -> str:
+    """B3：【今日摘要】板块。放在报告最前面 —— 读者先要知道今天出没出事，
+    再决定要不要往下翻细节。正文写的每一句，下面那张表里都有出处。"""
+    esc = html.escape
+
+    if summary["day"] is None:
+        return """
+  <h2>今日摘要</h2>
+  <div class="panel"><p class="muted">事件日志里没有一条能解析出时间的事件，
+  生成不了今日摘要。在 Dashboard 上跑完一次「发现 → 处置 → 验证」闭环后
+  重新生成报告即可。</p></div>"""
+
+    rows = []
+    for item in summary["nodes"]:
+        if item["healthy"]:
+            rows.append(
+                "<tr>"
+                f'<td class="nowrap">{esc(item["node"])}</td>'
+                '<td colspan="5" class="muted">全天整体正常（当日无异常事件记录）</td>'
+                "</tr>"
+            )
+            continue
+        for fact in item["items"]:
+            when = fact["start"].strftime("%H:%M:%S") if fact["start"] else "时间未知"
+            span = f"{fact['span']}（{fact['span_label']}）" if fact["span"] else "—"
+            rows.append(
+                "<tr>"
+                f'<td class="nowrap">{esc(fact["node"])}</td>'
+                f'<td class="nowrap">{esc(when)}</td>'
+                f'<td>{esc(fact["condition"])}</td>'
+                f'<td>{esc(fact["action"] or "—")}</td>'
+                f'<td><span class="tag tag--{esc(fact["cls"])}">{esc(fact["state"])}</span></td>'
+                f'<td class="nowrap">{esc(span)}</td>'
+                "</tr>"
+            )
+
+    # 归不了组、以及被剔除的空壳段在这里报个数。摘要只认归好组的段，
+    # 但「有几条没能归类」得让人看见 —— 悄悄不提，读的人会以为日志是干净的
+    caveats = []
+    if summary["ungrouped"]:
+        caveats.append(f"另有 {summary['ungrouped']} 条事件没有 episode 标识（detail 里缺 eid 或解析失败），"
+                       "无法归入具体某次异常，未计入上面的次数，原样列在【事件复盘】的「未归组事件」里")
+    if summary["dropped"]:
+        caveats.append(f"另有 {summary['dropped']} 段只带 episode 标识、不含任何可读事件，已忽略")
+    caveat_html = "".join(f"<li>{esc(text)}</li>" for text in caveats)
+    caveat_block = f'<ul class="skipped">{caveat_html}</ul>' if caveats else ""
+
+    return f"""
+  <h2>今日摘要（{esc(summary["day"].strftime("%Y-%m-%d"))}）</h2>
+  <div class="panel">
+    <p class="headline">{esc(summary["summary"])}</p>
+    <table>
+      <thead><tr><th>宿舍</th><th>时间</th><th>异常类型</th><th>处置</th><th>结果</th><th>用时</th></tr></thead>
+      <tbody>{"".join(rows)}</tbody>
+    </table>
+    <p class="muted">上面这段话由 analysis/analysis.py 依事件日志自动生成，不是写死的文案：
+    换一份事件日志重新运行，摘要会整段重写。表中「处置」列取该段最早的一次操作，
+    完整操作序列见下方【事件复盘】；「用时」在已恢复的行里是处置动作到判定的间隔，
+    其余行是异常开始到判定的间隔。全天整体正常的宿舍，依据是当日没有异常事件记录
+    —— 节点停了不发报文，在这里也会显示为正常。</p>
+    {caveat_block}
+  </div>"""
+
+
+def render_report(records, stats, skipped, csv_path: Path, png_name: str, events=None,
+                  summary=None) -> str:
     esc = html.escape
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -815,6 +1117,7 @@ def render_report(records, stats, skipped, csv_path: Path, png_name: str, events
       <ul class="skipped">{items}</ul>"""
 
     events_section = render_events_section(events or [])
+    summary_section = render_summary_section(summary) if summary else ""
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -857,6 +1160,8 @@ def render_report(records, stats, skipped, csv_path: Path, png_name: str, events
   tbody tr:last-child td {{ border-bottom: none; }}
   td.warn {{ color: var(--warn); font-weight: 600; }}
   .muted {{ color: var(--muted); font-size: 13.5px; }}
+  .headline {{ margin: 0 0 14px; padding-left: 12px; border-left: 3px solid var(--accent);
+               font-size: 15.5px; line-height: 1.75; }}
   .skipped {{ margin: 0; padding-left: 20px; color: var(--muted); font-size: 13px; }}
   img.trend {{ display: block; width: 100%; height: auto; border-radius: 10px; }}
   .episode {{ border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;
@@ -885,7 +1190,9 @@ def render_report(records, stats, skipped, csv_path: Path, png_name: str, events
     </p>
   </header>
 
-  <h2>摘要</h2>
+{summary_section}
+
+  <h2>数据概况</h2>
   <div class="stats">{"".join(cards)}</div>
 
   <div class="cols" style="margin-top: 14px;">
@@ -992,9 +1299,14 @@ def main(argv=None) -> int:
     png_path = outdir / "trend.png"
     draw_trend(records, stats, png_path)
 
+    # B3 今日摘要：只由事件日志决定，和 CSV 的统计各算各的 ——
+    # 摘要讲的是「谁出了问题、做了什么、结果怎样」，那是事件日志里的事，
+    # 温湿度 CSV 里没有宿舍、也没有处置动作
+    summary = build_daily_summary(events)
+
     report_path = outdir / "report.html"
     report_path.write_text(
-        render_report(records, stats, skipped, csv_path, png_path.name, events),
+        render_report(records, stats, skipped, csv_path, png_path.name, events, summary),
         encoding="utf-8",
     )
 
@@ -1009,6 +1321,12 @@ def main(argv=None) -> int:
         sorted(stats["status_counts"].items(), key=lambda kv: (-kv[1], kv[0]))
     ))
     print(f"异常记录：{len(stats['abnormal'])} 条")
+
+    # 摘要打到控制台上，是为了让「这段话是程序生成的」当场可见：
+    # 报告是覆盖写的，屏幕上这一行和 report.html 里那一句必然同源同次
+    print(f"\n今日摘要（{summary['day'] or '事件日志里没有可用时间'}）：")
+    print(f"  {summary['summary'] or '（无事件记录，未生成摘要）'}")
+
     print(f"\n已生成：\n  {png_path}\n  {report_path}")
     return 0
 

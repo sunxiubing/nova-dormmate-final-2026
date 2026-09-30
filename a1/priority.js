@@ -256,6 +256,80 @@
     };
   }
 
+  /* 趋势方向（B4：Dashboard 三段式横幅与语音播报的第三段）。
+
+     这一段不是固定文案 —— 它读的是「上一条报文 → 这一条报文」的实际变化，
+     同一间宿舍在不同时刻说的是不同的话：
+       高温处置生效          32.6 → 26.8   温度正在下降
+       高温处置还没见效      32   → 33.2   温度正在上升  （后面接的是坏的走向）
+       低温偏湿处置生效      12/80 → 15/72 温度正在上升且湿度正在下降
+     所以调用方必须把上一条读数一起传进来，不能自己编一句「温度正在下降」。
+
+     关心哪几维由异常类型决定，而不是「谁动报谁」：
+       高温 / 低温           只看温度
+       高湿（wet）           只看湿度
+       高温偏湿 / 低温偏湿    温度和湿度都要看
+     组合异常两维都报 —— 只报温度那半，「低温偏湿」处置后除湿机干了半天活
+     在横幅上就一个字都看不到，等于白开。
+
+     阈值不是 0：传感器噪声、报文的小抖动不该被说成「正在上升」。
+     温度 0.5℃、湿度 2% 以下算「基本平稳」；两维都平稳时并成一句「温湿度基本平稳」。
+
+     prev / curr 是 {temperature, humidity} 形状。首条报文 prev 是 '--'（不是有限数字），
+     这时返回空串，调用方把趋势段整个省掉 —— 宁可不说，也不编一句「正在上升」骗读者。
+
+     kind 传 null 表示「异常段已经结束，类型不可考」（结论节点在 tracker 里已被清零）：
+     这时两维都看，谁动了报谁。 */
+  var TREND_TEMP_MIN = 0.5;   // ℃
+  var TREND_HUM_MIN = 2;      // %
+  // 类型 → 看哪几维。两张表必须同源，漏一个 kind 就会算出空趋势
+  var TEMP_DIM = { hot: 1, cold: 1, hotWet: 1, coldWet: 1 };
+  var HUM_DIM = { wet: 1, hotWet: 1, coldWet: 1 };
+  // 取一组可比的前后值；缺字段、不是有限数字（首条报文的 '--'）都返回 null
+  function pairOf(prev, curr, key) {
+    if (!prev || !curr) return null;
+    if (typeof prev !== 'object' || typeof curr !== 'object') return null;
+    var a = prev[key], b = curr[key];
+    if (typeof a !== 'number' || !isFinite(a)) return null;
+    if (typeof b !== 'number' || !isFinite(b)) return null;
+    return [a, b];
+  }
+  // 一维的趋势。返回值带 moved，双维时靠它决定「讲哪几句、要不要并成一句平稳」
+  function axisText(key, name, min, prev, curr) {
+    var pair = pairOf(prev, curr, key);
+    if (!pair) return null;
+    var diff = pair[1] - pair[0];
+    if (diff >= min) return { text: name + '正在上升', moved: true };
+    if (diff <= -min) return { text: name + '正在下降', moved: true };
+    return { text: name + '基本平稳', moved: false };
+  }
+  function trendText(kind, prev, curr) {
+    var useTemp, useHum;
+    if (kind) {
+      useTemp = !!TEMP_DIM[kind];
+      useHum = !!HUM_DIM[kind];
+      if (!useTemp && !useHum) return '';   // 不认识的 kind：说不出趋势
+    } else {
+      useTemp = true;
+      useHum = true;
+    }
+    var t = useTemp ? axisText('temperature', '温度', TREND_TEMP_MIN, prev, curr) : null;
+    var h = useHum ? axisText('humidity', '湿度', TREND_HUM_MIN, prev, curr) : null;
+
+    // 只看一维：有数据就出结论（含「基本平稳」），没数据整段省掉
+    if (useTemp && !useHum) return t ? t.text : '';
+    if (useHum && !useTemp) return h ? h.text : '';
+
+    // 两维都看：只讲真的动了的那些 —— 温度在升、湿度没动，
+    // 报「温度正在上升」就够了，再补一句「湿度基本平稳」是噪音
+    if (!t && !h) return '';
+    if (t && h && !t.moved && !h.moved) return '温湿度基本平稳';
+    var parts = [];
+    if (t && t.moved) parts.push(t.text);
+    if (h && h.moved) parts.push(h.text);
+    return parts.join('且');
+  }
+
   return {
     NODE_ORDER: NODE_ORDER,
     ALERT_TEXT: ALERT_TEXT,
@@ -269,6 +343,7 @@
     pick: pick,
     durationText: durationText,
     reasonText: reasonText,
-    describe: describe
+    describe: describe,
+    trendText: trendText
   };
 });
